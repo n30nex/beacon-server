@@ -7,6 +7,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"testing"
+
+	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/google/uuid"
 )
 
 func TestParseNumber_Float(t *testing.T) {
@@ -122,5 +125,41 @@ func TestUint32ToBytes_RoundTrip(t *testing.T) {
 	got := binary.LittleEndian.Uint32(b)
 	if got != v {
 		t.Errorf("round trip failed: expected %x, got %x", v, got)
+	}
+}
+
+func TestResolvedPathHops(t *testing.T) {
+	name := "relay"
+	lat := 45.42
+	lng := -75.69
+	nodeID := uuid.New()
+	otherID := uuid.New()
+	hops := resolvedPathHops(
+		[][]byte{{0xaa}, {0xbb}, {0xcc}},
+		map[string][]api.ResolvedPathEntry{
+			"aa": {
+				{NodeID: nodeID, Name: &name, PublicKey: []byte{0xaa, 0x01}, Latitude: &lat, Longitude: &lng},
+			},
+			"bb": {
+				{NodeID: nodeID, PublicKey: []byte{0xbb, 0x01}},
+				{NodeID: otherID, PublicKey: []byte{0xbb, 0x02}},
+			},
+		},
+	)
+
+	if got := len(hops); got != 3 {
+		t.Fatalf("expected 3 hops, got %d", got)
+	}
+	if hops[0].Confidence != "high" || len(hops[0].Nodes) != 1 {
+		t.Fatalf("expected first hop high confidence, got %+v", hops[0])
+	}
+	if hops[0].Nodes[0].ID != nodeID || hops[0].Nodes[0].PublicKey != "aa01" || hops[0].Nodes[0].Name == nil {
+		t.Fatalf("unexpected first node: %+v", hops[0].Nodes[0])
+	}
+	if hops[1].Confidence != "ambiguous" || len(hops[1].Nodes) != 2 {
+		t.Fatalf("expected second hop ambiguous, got %+v", hops[1])
+	}
+	if hops[2].Confidence != "none" || len(hops[2].Nodes) != 0 {
+		t.Fatalf("expected third hop none, got %+v", hops[2])
 	}
 }

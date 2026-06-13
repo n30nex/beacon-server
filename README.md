@@ -281,6 +281,38 @@ everything). Empty array means match nothing on that dimension. `regionIds` and
 | `nodeUpdate`        | Node upserted from advert                           |
 | `channelMessage`    | Decrypted channel message (scope must include hash) |
 
+`packetObservation` data includes packet-level metadata plus the observer
+hearing that was just written. `packet.rawHex` is the full observed packet in
+wire order for live visualizers; `observation.pathBytes` and
+`observation.pathLength` describe the accumulated path hashes.
+
+```json
+{
+  "packetHash": "0123abcd",
+  "packet": {
+    "payloadType": 4,
+    "payloadTypeName": "ADVERT",
+    "routeType": 1,
+    "routeTypeName": "FLOOD",
+    "rawHex": "444f...",
+    "isFirstObservation": true,
+    "observationCount": 1
+  },
+  "observation": {
+    "observerId": "uuid",
+    "observerName": "YVR observer",
+    "iata": "YVR",
+    "heardAt": 1234567890000,
+    "rssi": -91,
+    "snr": 8.5,
+    "sourceBroker": "mqtt1",
+    "pathBytes": "aabbcc",
+    "pathLength": { "raw": "43", "hashSize": 1, "hopCount": 3 },
+    "propagationTimeMs": 0
+  }
+}
+```
+
 ### Backpressure
 
 The server write buffer per connection is bounded at 256 events. If a client
