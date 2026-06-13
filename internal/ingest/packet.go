@@ -94,8 +94,41 @@ type packetObservationEvent struct {
 			HashSize uint8  `json:"hashSize"`
 			HopCount uint8  `json:"hopCount"`
 		} `json:"pathLength"`
-		PropagationTimeMs int32 `json:"propagationTimeMs"`
+		PropagationTimeMs int32             `json:"propagationTimeMs"`
+		ResolvedPath      []api.ResolvedHop `json:"resolvedPath,omitempty"`
 	} `json:"observation"`
+}
+
+func resolvedPathHops(hashes [][]byte, resolved map[string][]api.ResolvedPathEntry) []api.ResolvedHop {
+	if len(hashes) == 0 {
+		return nil
+	}
+	hops := make([]api.ResolvedHop, 0, len(hashes))
+	for _, hash := range hashes {
+		entries := resolved[hex.EncodeToString(hash)]
+		hop := api.ResolvedHop{
+			Nodes: make([]api.ResolvedNode, 0, len(entries)),
+		}
+		switch len(entries) {
+		case 0:
+			hop.Confidence = "none"
+		case 1:
+			hop.Confidence = "high"
+		default:
+			hop.Confidence = "ambiguous"
+		}
+		for _, entry := range entries {
+			hop.Nodes = append(hop.Nodes, api.ResolvedNode{
+				ID:        entry.NodeID,
+				Name:      entry.Name,
+				PublicKey: hex.EncodeToString(entry.PublicKey),
+				Latitude:  entry.Latitude,
+				Longitude: entry.Longitude,
+			})
+		}
+		hops = append(hops, hop)
+	}
+	return hops
 }
 
 type parsedAnonReq struct {
@@ -606,7 +639,8 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		}
 	}
 
-	resolved, err := w.db.ResolvePathHashes(ctx, iata, packet.PathHashes())
+	hashes := packet.PathHashes()
+	resolved, err := w.db.ResolvePathHashes(ctx, iata, hashes)
 	if err != nil {
 		log.Printf("ingest[%s]: path resolution failed: %v", w.cfg.BrokerName, err)
 	}
@@ -616,7 +650,6 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 			resolvedIDs = append(resolvedIDs, e.NodeID)
 		}
 	}
-	hashes := packet.PathHashes()
 	if len(hashes) > 0 && resolved != nil {
 		allHigh := true
 		nodeIDs := make([]uuid.UUID, 0, len(hashes))
@@ -660,6 +693,9 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		evt.Observation.PathLength.HashSize = packet.PathHashSize()
 		evt.Observation.PathLength.HopCount = packet.PathHashCount()
 		evt.Observation.PropagationTimeMs = 0 // not yet calculated
+		if resolved != nil {
+			evt.Observation.ResolvedPath = resolvedPathHops(hashes, resolved)
+		}
 		count, err := w.db.GetPacketObservationCount(ctx, packetHash[:])
 		if err != nil {
 			log.Printf("ingest[%s]: failed to get observation count: %v", w.cfg.BrokerName, err)
