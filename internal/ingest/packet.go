@@ -75,6 +75,7 @@ type packetObservationEvent struct {
 		PayloadTypeName    string  `json:"payloadTypeName"`
 		RouteType          uint8   `json:"routeType"`
 		RouteTypeName      string  `json:"routeTypeName"`
+		RawHex             string  `json:"rawHex,omitempty"`
 		IsFirstObservation bool    `json:"isFirstObservation"`
 		ObservationCount   int64   `json:"observationCount"`
 		Scope              *string `json:"scope,omitempty"`
@@ -645,6 +646,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		evt.Packet.PayloadTypeName = packet.PayloadTypeString()
 		evt.Packet.RouteType = packet.RouteType()
 		evt.Packet.RouteTypeName = api.RouteTypeName(int16(packet.RouteType()))
+		evt.Packet.RawHex = hex.EncodeToString(hexBytes)
 		evt.Packet.IsFirstObservation = isNew
 		evt.Observation.ObserverID = id.String()
 		evt.Observation.ObserverName = observerName
