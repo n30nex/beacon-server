@@ -740,17 +740,6 @@ func (q *Queries) GetPacketByHash(ctx context.Context, packetHash []byte) (GetPa
 	return i, err
 }
 
-const getPacketObservationCount = `-- name: GetPacketObservationCount :one
-SELECT COUNT(*) FROM packet_observations WHERE packet_hash = $1
-`
-
-func (q *Queries) GetPacketObservationCount(ctx context.Context, packetHash []byte) (int64, error) {
-	row := q.db.QueryRow(ctx, getPacketObservationCount, packetHash)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const getPacketsByTraceTag = `-- name: GetPacketsByTraceTag :many
 SELECT encode(p.packet_hash, 'hex') AS packet_hash_hex,
     p.route_type,
@@ -1378,28 +1367,32 @@ func (q *Queries) InsertChannelMessage(ctx context.Context, arg InsertChannelMes
 
 const insertObservation = `-- name: InsertObservation :one
 
-INSERT INTO packet_observations (
-  packet_hash,
-  observer_id,
-  iata,
-  heard_at,
-  path_length_byte,
-  hash_size,
-  hop_count,
-  path_bytes,
-  rssi,
-  snr,
-  propagation_time_ms,
-  radio_freq_mhz,
-  spread_factor,
-  bandwidth_khz,
-  coding_rate,
-  source_broker
-) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+WITH ins AS (
+  INSERT INTO packet_observations (
+    packet_hash,
+    observer_id,
+    iata,
+    heard_at,
+    path_length_byte,
+    hash_size,
+    hop_count,
+    path_bytes,
+    rssi,
+    snr,
+    propagation_time_ms,
+    radio_freq_mhz,
+    spread_factor,
+    bandwidth_khz,
+    coding_rate,
+    source_broker
+  ) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+  )
+  ON CONFLICT (packet_hash, observer_id, heard_at) DO NOTHING
+  RETURNING id, packet_hash
 )
-ON CONFLICT (packet_hash, observer_id, heard_at) DO NOTHING
-RETURNING id, packet_hash, observer_id, iata, heard_at, path_length_byte, hash_size, hop_count, path_bytes, rssi, snr, propagation_time_ms, radio_freq_mhz, spread_factor, bandwidth_khz, coding_rate, source_broker
+SELECT ins.id, (SELECT COUNT(*) FROM packet_observations po WHERE po.packet_hash = ins.packet_hash) + 1 AS observation_count
+FROM ins
 `
 
 type InsertObservationParams struct {
@@ -1424,7 +1417,12 @@ type InsertObservationParams struct {
 // ============================================================
 // PACKET OBSERVATIONS
 // ============================================================
-func (q *Queries) InsertObservation(ctx context.Context, arg InsertObservationParams) (PacketObservation, error) {
+type InsertObservationRow struct {
+	ID               int64 `json:"id"`
+	ObservationCount int64 `json:"observation_count"`
+}
+
+func (q *Queries) InsertObservation(ctx context.Context, arg InsertObservationParams) (InsertObservationRow, error) {
 	row := q.db.QueryRow(ctx, insertObservation,
 		arg.PacketHash,
 		arg.ObserverID,
@@ -1443,26 +1441,8 @@ func (q *Queries) InsertObservation(ctx context.Context, arg InsertObservationPa
 		arg.CodingRate,
 		arg.SourceBroker,
 	)
-	var i PacketObservation
-	err := row.Scan(
-		&i.ID,
-		&i.PacketHash,
-		&i.ObserverID,
-		&i.Iata,
-		&i.HeardAt,
-		&i.PathLengthByte,
-		&i.HashSize,
-		&i.HopCount,
-		&i.PathBytes,
-		&i.Rssi,
-		&i.Snr,
-		&i.PropagationTimeMs,
-		&i.RadioFreqMhz,
-		&i.SpreadFactor,
-		&i.BandwidthKhz,
-		&i.CodingRate,
-		&i.SourceBroker,
-	)
+	var i InsertObservationRow
+	err := row.Scan(&i.ID, &i.ObservationCount)
 	return i, err
 }
 

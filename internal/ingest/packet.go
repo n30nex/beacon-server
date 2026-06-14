@@ -473,8 +473,11 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 			traceTag = uint32ToBytes(trace.Tag)
 			hashSize := int(trace.PathHashSize())
 			hashes := make([]string, 0)
-			for i := 0; i+hashSize <= len(trace.PathHashes); i += hashSize {
-				hashes = append(hashes, hex.EncodeToString(trace.PathHashes[i:i+hashSize]))
+			if hashSize > 0 {
+				hashes = make([]string, 0, len(trace.PathHashes)/hashSize)
+				for i := 0; i+hashSize <= len(trace.PathHashes); i += hashSize {
+					hashes = append(hashes, hex.EncodeToString(trace.PathHashes[i:i+hashSize]))
+				}
 			}
 			// SNR values are in packet.Path, one signed int8 per consumed hop
 			snrValues := make([]float32, 0, len(packet.Path))
@@ -488,7 +491,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 			pt := parsedTrace{
 				Raw:        hex.EncodeToString(packet.Payload),
 				Type:       traceType,
-				TraceTag:   hex.EncodeToString(uint32ToBytes(trace.Tag)),
+				TraceTag:   hex.EncodeToString(traceTag),
 				AuthCode:   trace.AuthCode,
 				Flags:      trace.Flags,
 				PathHashes: hashes,
@@ -627,7 +630,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		CodingRate:        radio.CR,
 		SourceBroker:      w.cfg.BrokerName,
 	}
-	inserted, err := w.db.InsertObservation(ctx, oParams)
+	inserted, observationCount, err := w.db.InsertObservation(ctx, oParams)
 	if err != nil {
 		log.Printf("ingest[%s]: db: insert observation failed from %s/%s: %v", w.cfg.BrokerName, iata, pubkeyHex, err)
 		return
@@ -696,12 +699,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		if resolved != nil {
 			evt.Observation.ResolvedPath = resolvedPathHops(hashes, resolved)
 		}
-		count, err := w.db.GetPacketObservationCount(ctx, packetHash[:])
-		if err != nil {
-			log.Printf("ingest[%s]: failed to get observation count: %v", w.cfg.BrokerName, err)
-			count = 0
-		}
-		evt.Packet.ObservationCount = count
+		evt.Packet.ObservationCount = observationCount
 		if matchedScope != nil {
 			evt.Packet.Scope = matchedScope
 		}

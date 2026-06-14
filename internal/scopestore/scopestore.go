@@ -32,11 +32,12 @@ func (s *ScopeStore) Load(entries []Entry) {
 	s.entries = entries
 }
 
-// Entries returns a copy of all loaded entries.
+// Entries returns the loaded entries for read-only iteration. The slice is
+// swapped wholesale by Load and never mutated in place, so callers may range
+// over the result safely but must not modify it. Avoiding the defensive copy
+// matters because this is called for every transport packet during ingest.
 func (s *ScopeStore) Entries() []Entry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	result := make([]Entry, len(s.entries))
-	copy(result, s.entries)
-	return result
+	return s.entries
 }

@@ -3,7 +3,45 @@
 
 package hub
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+// TestFrameEvent verifies the wire frame produced once by the hub is valid
+// JSON and carries exactly the envelope the WS protocol promises:
+// {"v":1,"type":"event","event":<type>,"data":<payload>}.
+func TestFrameEvent(t *testing.T) {
+	payload := json.RawMessage(`{"packetHash":"ab","observationCount":3}`)
+	framed := frameEvent(EventPacketObservation, payload)
+
+	var got struct {
+		V     int             `json:"v"`
+		Type  string          `json:"type"`
+		Event string          `json:"event"`
+		Data  json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(framed, &got); err != nil {
+		t.Fatalf("framed event is not valid JSON: %v (%s)", err, framed)
+	}
+	if got.V != 1 || got.Type != "event" {
+		t.Errorf("unexpected envelope: v=%d type=%q", got.V, got.Type)
+	}
+	if got.Event != string(EventPacketObservation) {
+		t.Errorf("event = %q, want %q", got.Event, EventPacketObservation)
+	}
+	if string(got.Data) != string(payload) {
+		t.Errorf("data = %s, want %s", got.Data, payload)
+	}
+}
+
+// TestFrameEvent_NilPayload ensures a missing payload still yields valid JSON.
+func TestFrameEvent_NilPayload(t *testing.T) {
+	framed := frameEvent(EventObserverStatus, nil)
+	if !json.Valid(framed) {
+		t.Fatalf("framed event with nil payload is invalid JSON: %s", framed)
+	}
+}
 
 func TestScopeMatches_EmptyScope(t *testing.T) {
 	// empty scope matches everything — no filters means no restrictions

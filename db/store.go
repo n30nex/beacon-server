@@ -9,9 +9,11 @@ package db
 import (
 	"context"
 	"encoding/hex"
+	"sync"
 
 	sqlc "github.com/MeshCore-Beacon/beacon-server/db/sqlc"
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/MeshCore-Beacon/beacon-server/internal/ingest"
 	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,12 +22,63 @@ import (
 
 // Store wraps the sqlc-generated Queries and implements both ingest.DB and api.Reader.
 type Store struct {
-	q *sqlc.Queries
+	q     *sqlc.Queries
+	radio *radioCache
 }
 
 // New creates a Store backed by the given pgxpool connection pool.
 func New(pool *pgxpool.Pool) *Store {
-	return &Store{q: sqlc.New(pool)}
+	return &Store{q: sqlc.New(pool), radio: newRadioCache()}
+}
+
+// radioCache memoises observer radio settings, which change only on /status
+// messages and are otherwise static per observer. Caching them removes a
+// per-packet DB round-trip from the ingest hot path (GetObserverRadio is called
+// for every observation).
+//
+// Correctness: entries are invalidated on UpdateObserverStatus. A generation
+// counter guards the read-through path so a value read just before an
+// invalidation is never cached over a newer one — if the generation advanced
+// during a miss's DB read, the result is simply not cached and the next call
+// re-reads. Worst case the cache degrades to the previous always-hit-DB
+// behaviour; it never serves stale data. Safe for concurrent use by both
+// broker workers, which share a single Store.
+type radioCache struct {
+	mu  sync.RWMutex
+	m   map[uuid.UUID]ingest.RadioSettings
+	gen uint64
+}
+
+func newRadioCache() *radioCache {
+	return &radioCache{m: make(map[uuid.UUID]ingest.RadioSettings)}
+}
+
+// lookup returns the cached settings (if present) and the current generation,
+// which the caller passes back to store to detect a racing invalidation.
+func (rc *radioCache) lookup(id uuid.UUID) (ingest.RadioSettings, bool, uint64) {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	v, ok := rc.m[id]
+	return v, ok, rc.gen
+}
+
+// store caches v for id only if no invalidation happened since gen was sampled.
+func (rc *radioCache) store(id uuid.UUID, v ingest.RadioSettings, gen uint64) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.gen == gen {
+		rc.m[id] = v
+	}
+}
+
+// invalidate drops the cached entry for id and advances the generation so any
+// in-flight read-through for it (or another id) declines to cache a now-stale
+// value.
+func (rc *radioCache) invalidate(id uuid.UUID) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	delete(rc.m, id)
+	rc.gen++
 }
 
 func (s *Store) ResolvePathHashes(ctx context.Context, iata string, hashes [][]byte) (map[string][]api.ResolvedPathEntry, error) {

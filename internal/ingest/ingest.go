@@ -85,8 +85,12 @@ type DB interface {
 	SetPacketDecrypted(ctx context.Context, hash []byte) error
 
 	// InsertObservation inserts a packet_observations row.
-	// Returns (inserted, error); inserted=false means ON CONFLICT DO NOTHING fired.
-	InsertObservation(ctx context.Context, o InsertObservationParams) (bool, error)
+	// Returns (inserted, observationCount, error); inserted=false means
+	// ON CONFLICT DO NOTHING fired. observationCount is the total number of
+	// observations for the packet (including this one) and is meaningful only
+	// when inserted is true — it is returned in the same round-trip as the
+	// insert, so no separate count query is needed on the hot path.
+	InsertObservation(ctx context.Context, o InsertObservationParams) (bool, int64, error)
 
 	// SetNodeCapability flips supports_multibyte_paths or supports_multibyte_traces
 	// for a node, never downgrading an existing TRUE.
@@ -140,9 +144,6 @@ type DB interface {
 	// hash-only row exists per channel hash. The return value is the channel ID
 	// but can be safely ignored since unknown-key channels have no messages.
 	UpsertChannelHashOnly(ctx context.Context, channelHash []byte) (int, error)
-
-	// GetPacketObservationCount returns the number of rows for the packet observations
-	GetPacketObservationCount(ctx context.Context, packetHash []byte) (int64, error)
 
 	// GetTransportScopeByName returns the ID of a transport scope by its normalized name.
 	GetTransportScopeByName(ctx context.Context, name string) (int32, error)
