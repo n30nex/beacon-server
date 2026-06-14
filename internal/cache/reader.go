@@ -20,6 +20,7 @@ const (
 	keyRegions                 = "beacon:regions"
 	keyRegionPrefix            = "beacon:region:"
 	keyRegionSlugPrefix        = "beacon:region:slug:"
+	keyAtlasRegionPrefix       = "beacon:atlas:region:"
 	keyScopeNames              = "beacon:scope:names"
 	keyScopeStats              = "beacon:scope:stats"
 	keyScopesByIATAsPrefix     = "beacon:scopes:iatas:"
@@ -51,6 +52,7 @@ type CachedReader struct {
 // All fields should be non-zero — use ResolveTTLs to build this from
 // config with fallback to the global TTL and then the default.
 type CacheTTLs struct {
+	Atlas     time.Duration
 	Stats     time.Duration
 	Reference time.Duration
 	Nodes     time.Duration
@@ -66,6 +68,29 @@ func NewCachedReader(inner api.Reader, c *Client, ttl CacheTTLs) api.Reader {
 		c:     c,
 		ttl:   ttl,
 	}
+}
+
+func slugOrAll(slug string) string {
+	if slug == "" {
+		return "all"
+	}
+	return slug
+}
+
+func atlasCacheWindow(since, until time.Time, bucket time.Duration) (time.Time, time.Time) {
+	if bucket <= 0 {
+		bucket = 30 * time.Second
+	}
+	if until.IsZero() {
+		until = time.Now()
+	}
+	until = until.Truncate(bucket)
+	if since.IsZero() {
+		since = until.Add(-24 * time.Hour)
+	} else {
+		since = since.Truncate(bucket)
+	}
+	return since, until
 }
 
 // InvalidateNode removes the cached entries for a node by UUID.
@@ -115,6 +140,20 @@ func (cr *CachedReader) GetRegionBySlug(ctx context.Context, slug string) (*api.
 	return getOrSet(ctx, cr.c, keyRegionSlugPrefix+slug, cr.ttl.Reference, func() (*api.Region, error) {
 		return cr.inner.GetRegionBySlug(ctx, slug)
 	})
+}
+
+// GetRegionAtlasSummary implements [api.Reader].
+func (cr *CachedReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
+	since, until = atlasCacheWindow(since, until, cr.ttl.Atlas)
+	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasRegionPrefix, slugOrAll(slug), since.UnixMilli(), until.UnixMilli())
+	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.RegionAtlasSummary, error) {
+		return cr.inner.GetRegionAtlasSummary(ctx, slug, since, until)
+	})
+}
+
+// ListAtlasReplay implements [api.Reader].
+func (cr *CachedReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
+	return cr.inner.ListAtlasReplay(ctx, regionSlug, since, until, cursor, limit)
 }
 
 // GetScopeNames implements [api.Reader].

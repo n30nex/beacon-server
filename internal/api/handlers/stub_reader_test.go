@@ -36,6 +36,14 @@ func (stubReader) GetRegionBySlug(ctx context.Context, slug string) (*api.Region
 	return nil, nil
 }
 
+func (stubReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
+	return nil, nil
+}
+
+func (stubReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
+	return api.Page[api.AtlasReplayPacket]{}, nil
+}
+
 func (stubReader) ListChannels(ctx context.Context, limit int32, hash []byte, iata string, cursor int64) (api.Page[api.ChannelSummary], error) {
 	return api.Page[api.ChannelSummary]{}, nil
 }

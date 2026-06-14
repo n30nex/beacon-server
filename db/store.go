@@ -20,12 +20,13 @@ import (
 
 // Store wraps the sqlc-generated Queries and implements both ingest.DB and api.Reader.
 type Store struct {
-	q *sqlc.Queries
+	q    *sqlc.Queries
+	pool *pgxpool.Pool
 }
 
 // New creates a Store backed by the given pgxpool connection pool.
 func New(pool *pgxpool.Pool) *Store {
-	return &Store{q: sqlc.New(pool)}
+	return &Store{q: sqlc.New(pool), pool: pool}
 }
 
 func (s *Store) ResolvePathHashes(ctx context.Context, iata string, hashes [][]byte) (map[string][]api.ResolvedPathEntry, error) {

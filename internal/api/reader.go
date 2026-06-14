@@ -42,6 +42,14 @@ type Reader interface {
 	// Returns nil, pgx.ErrNoRows if the region is not found.
 	GetRegionBySlug(ctx context.Context, slug string) (*Region, error)
 
+	// GetRegionAtlasSummary returns all aggregate data required by the Atlas
+	// regional story view for a named region or the special "all" slug.
+	GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*RegionAtlasSummary, error)
+
+	// ListAtlasReplay returns paginated packets enriched with map-ready path
+	// points for Atlas playback.
+	ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (Page[AtlasReplayPacket], error)
+
 	// ListChannels returns a paginated list of channels ordered by last seen.
 	// Includes both hashtag-derived and explicit key channels.
 	// Pass nil hash to skip hash filtering. Pass empty string iata to return all channels.

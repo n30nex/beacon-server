@@ -186,6 +186,7 @@ websocket:
 cache:
   ttl: "1h"
   ttls:
+    atlas: "30s" # regional Atlas summaries use rolling windows
     stats: "1h" # stats endpoints (backed by materialized views)
     reference: "1h" # IATAs, regions, scopes
     nodes: "1h" # node detail (also explicitly invalidated on upsert)

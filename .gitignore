@@ -7,3 +7,4 @@ notes.md
 roadmap.md
 
 binaries/
+.build/

@@ -29,6 +29,98 @@ definitions:
       snr:
         type: number
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasIATA:
+    properties:
+      activeObservers:
+        type: integer
+      displayName:
+        type: string
+      iata:
+        type: string
+      lat:
+        type: number
+      lng:
+        type: number
+      observationCount:
+        type: integer
+      uniquePackets:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasPathPoint:
+    properties:
+      at:
+        type: integer
+      iata:
+        type: string
+      kind:
+        description: origin or observer
+        type: string
+      label:
+        type: string
+      lat:
+        type: number
+      lng:
+        type: number
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasReplayPacket:
+    properties:
+      firstHeardAt:
+        type: integer
+      iatas:
+        items:
+          type: string
+        type: array
+      lastHeardAt:
+        type: integer
+      latestObserver:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.PacketLatestObserver'
+      observationCount:
+        type: integer
+      origin:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ResolvedNode'
+      packetHash:
+        type: string
+      path:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasPathPoint'
+        type: array
+      payloadType:
+        type: integer
+      payloadTypeName:
+        type: string
+      routeType:
+        type: integer
+      routeTypeName:
+        type: string
+      scope:
+        type: string
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasStoryBeat:
+    properties:
+      at:
+        type: integer
+      detail:
+        type: string
+      iata:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      title:
+        type: string
+      value:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasWindow:
+    properties:
+      since:
+        description: epoch ms
+        type: integer
+      until:
+        description: epoch ms
+        type: integer
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.Channel:
     properties:
       channelHash:
@@ -682,6 +774,17 @@ definitions:
       nextCursor:
         type: integer
     type: object
+  ? github_com_MeshCore-Beacon_beacon-server_internal_api.Page-github_com_MeshCore-Beacon_beacon-server_internal_api_AtlasReplayPacket
+  : properties:
+      hasMore:
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasReplayPacket'
+        type: array
+      nextCursor:
+        type: integer
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.Page-github_com_MeshCore-Beacon_beacon-server_internal_api_ChannelSummary:
     properties:
       hasMore:
@@ -784,6 +887,51 @@ definitions:
         description: suggested map zoom level
         type: integer
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.RegionAtlasSummary:
+    properties:
+      hourly:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ObservationPoint'
+        type: array
+      iatas:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasIATA'
+        type: array
+      kpis:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsOverview'
+      nodeTypes:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NodeTypeCount'
+        type: array
+      payloadMix:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.PayloadBreakdownItem'
+        type: array
+      radioPresets:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.RadioPreset'
+        type: array
+      region:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.Region'
+      scopes:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ScopeSummary'
+        type: array
+      storyBeats:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasStoryBeat'
+        type: array
+      topNodes:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopNode'
+        type: array
+      topObservers:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopObserver'
+        type: array
+      window:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasWindow'
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.RegionSummary:
     properties:
       id:
@@ -863,6 +1011,17 @@ definitions:
         type: integer
       packetCount:
         description: distinct packets matched to this scope
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.ScopeSummary:
+    properties:
+      iataCount:
+        type: integer
+      name:
+        type: string
+      nodeCount:
+        type: integer
+      observerCount:
         type: integer
     type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.StatsOverview:
@@ -999,6 +1158,37 @@ definitions:
       name:
         type: string
     type: object
+  internal_api_handlers.HealthBroker:
+    properties:
+      connected:
+        type: boolean
+      name:
+        type: string
+    type: object
+  internal_api_handlers.HealthDependency:
+    properties:
+      detail:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api_handlers.HealthResponse:
+    properties:
+      brokers:
+        items:
+          $ref: '#/definitions/internal_api_handlers.HealthBroker'
+        type: array
+      dependencies:
+        additionalProperties:
+          $ref: '#/definitions/internal_api_handlers.HealthDependency'
+        type: object
+      serverTime:
+        type: integer
+      status:
+        type: string
+      version:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact:
@@ -1012,6 +1202,81 @@ info:
   title: MeshCore Beacon API
   version: 1.4.1
 paths:
+  /atlas/regions/{slug}:
+    get:
+      parameters:
+      - description: Region slug, or all
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: Window start as epoch milliseconds
+        in: query
+        name: since
+        type: integer
+      - description: Window end as epoch milliseconds
+        in: query
+        name: until
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.RegionAtlasSummary'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+      summary: Get regional Atlas story summary
+      tags:
+      - Atlas
+  /atlas/replay:
+    get:
+      parameters:
+      - description: Region slug, defaults to all
+        in: query
+        name: region
+        type: string
+      - description: Window start as epoch milliseconds
+        in: query
+        name: since
+        type: integer
+      - description: Window end as epoch milliseconds
+        in: query
+        name: until
+        type: integer
+      - description: Observation ID cursor for pagination
+        in: query
+        name: cursor
+        type: integer
+      - description: Max results, clamped to 1-200
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.Page-github_com_MeshCore-Beacon_beacon-server_internal_api_AtlasReplayPacket'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+      summary: List regional Atlas replay packets
+      tags:
+      - Atlas
   /brokers:
     get:
       produces:
@@ -1036,6 +1301,18 @@ paths:
       - description: Filter by IATA code (case-insensitive)
         in: query
         name: iata
+        type: string
+      - description: Filter by IATA code(s), comma-separated e.g. YVR,YYJ
+        in: query
+        name: iatas
+        type: string
+      - description: Filter by region ID, expands to member IATAs
+        in: query
+        name: regionId
+        type: integer
+      - description: Filter by region slug, expands to member IATAs
+        in: query
+        name: region
         type: string
       - description: last_seen epoch ms of last item for pagination
         in: query
@@ -1144,6 +1421,22 @@ paths:
       summary: List messages for a channel
       tags:
       - Channels
+  /healthz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+      summary: Get runtime health
+      tags:
+      - Health
   /iatas:
     get:
       produces:

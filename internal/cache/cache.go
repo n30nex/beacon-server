@@ -41,6 +41,7 @@ func NewClient(addr, password string, db int) *Client {
 // chain: category TTL → global TTL → default (1h).
 func ResolveTTLs(cfg config.CacheConfig) CacheTTLs {
 	ttls := CacheTTLs{
+		Atlas:     resolveAtlas(cfg.TTLs.Atlas.Duration, cfg.TTL.Duration),
 		Stats:     resolve(cfg.TTLs.Stats.Duration, cfg.TTL.Duration),
 		Reference: resolve(cfg.TTLs.Reference.Duration, cfg.TTL.Duration),
 		Nodes:     resolve(cfg.TTLs.Nodes.Duration, cfg.TTL.Duration),
@@ -58,6 +59,13 @@ func resolve(category, global time.Duration) time.Duration {
 		return global
 	}
 	return time.Hour
+}
+
+func resolveAtlas(category, _ time.Duration) time.Duration {
+	if category != 0 {
+		return category
+	}
+	return 30 * time.Second
 }
 
 // Ping checks connectivity to Redis. Call this on startup to verify the
