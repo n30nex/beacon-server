@@ -65,3 +65,47 @@ func TestGetStatsTopObservers_InvalidLimit(t *testing.T) {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
+
+func TestGetStatsSummary_InvalidSince(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/summary", getStatsSummary(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/summary?since=notanint", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsRegions_InvalidWindow(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/regions", getStatsRegions(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/regions?since=2000&until=1000", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsPayloads_InvalidBucket(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/payloads", getStatsPayloads(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/payloads?bucket=15m", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsObserverHealth_InvalidStaleAfter(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/observer-health", getStatsObserverHealth(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/observer-health?staleAfterMinutes=nope", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}

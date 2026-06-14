@@ -36,6 +36,14 @@ func (stubReader) GetRegionBySlug(ctx context.Context, slug string) (*api.Region
 	return nil, nil
 }
 
+func (stubReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
+	return nil, nil
+}
+
+func (stubReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
+	return api.Page[api.AtlasReplayPacket]{}, nil
+}
+
 func (stubReader) ListChannels(ctx context.Context, limit int32, hash []byte, iata string, cursor int64) (api.Page[api.ChannelSummary], error) {
 	return api.Page[api.ChannelSummary]{}, nil
 }
@@ -100,6 +108,14 @@ func (stubReader) ListPacketsAfterID(ctx context.Context, afterObservationID int
 	return nil, nil
 }
 
+func (stubReader) ListLiveBackfill(ctx context.Context, filter api.LiveBackfillFilter) (api.Page[api.LivePacketObservation], error) {
+	return api.Page[api.LivePacketObservation]{}, nil
+}
+
+func (stubReader) GetLiveSummary(ctx context.Context, filter api.LiveSummaryFilter) (*api.LiveSummary, error) {
+	return &api.LiveSummary{}, nil
+}
+
 func (stubReader) GetPacket(ctx context.Context, packetHash []byte) (*api.Packet, error) {
 	return nil, nil
 }
@@ -134,6 +150,26 @@ func (stubReader) GetScopeStats(ctx context.Context) ([]api.ScopeStats, error) {
 
 func (stubReader) GetStatsNodeTypes(ctx context.Context, iatas []string) ([]api.NodeTypeCount, error) {
 	return nil, nil
+}
+
+func (stubReader) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*api.StatsSummary, error) {
+	return &api.StatsSummary{}, nil
+}
+
+func (stubReader) GetStatsRegions(ctx context.Context, filter api.StatsFilter) (*api.StatsRegions, error) {
+	return &api.StatsRegions{}, nil
+}
+
+func (stubReader) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) (*api.StatsPayloads, error) {
+	return &api.StatsPayloads{}, nil
+}
+
+func (stubReader) GetStatsRFHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsRFHealth, error) {
+	return &api.StatsRFHealth{}, nil
+}
+
+func (stubReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
+	return &api.StatsObserverHealthResponse{}, nil
 }
 
 func (stubReader) GetScopeNames(ctx context.Context) ([]string, error) {

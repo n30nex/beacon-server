@@ -81,6 +81,7 @@ type packetObservationEvent struct {
 		Scope              *string `json:"scope,omitempty"`
 	} `json:"packet"`
 	Observation struct {
+		ID           int64   `json:"id"`
 		ObserverID   string  `json:"observerId"`
 		ObserverName string  `json:"observerName"`
 		IATA         string  `json:"iata"`
@@ -627,7 +628,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		CodingRate:        radio.CR,
 		SourceBroker:      w.cfg.BrokerName,
 	}
-	inserted, err := w.db.InsertObservation(ctx, oParams)
+	observationID, inserted, err := w.db.InsertObservation(ctx, oParams)
 	if err != nil {
 		log.Printf("ingest[%s]: db: insert observation failed from %s/%s: %v", w.cfg.BrokerName, iata, pubkeyHex, err)
 		return
@@ -681,6 +682,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		evt.Packet.RouteTypeName = api.RouteTypeName(int16(packet.RouteType()))
 		evt.Packet.RawHex = hex.EncodeToString(hexBytes)
 		evt.Packet.IsFirstObservation = isNew
+		evt.Observation.ID = observationID
 		evt.Observation.ObserverID = id.String()
 		evt.Observation.ObserverName = observerName
 		evt.Observation.IATA = iata
@@ -705,7 +707,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 		if matchedScope != nil {
 			evt.Packet.Scope = matchedScope
 		}
-		w.broadcast(hub.EventPacketObservation, iata, packet.PayloadType(), "", evt)
+		w.broadcast(hub.EventPacketObservation, iata, packet.PayloadType(), packet.RouteType(), "", evt)
 	}
 }
 

@@ -15,27 +15,34 @@ import (
 )
 
 const (
-	keyIATAs                   = "beacon:iatas"
-	keyIATAPrefix              = "beacon:iata:"
-	keyRegions                 = "beacon:regions"
-	keyRegionPrefix            = "beacon:region:"
-	keyRegionSlugPrefix        = "beacon:region:slug:"
-	keyScopeNames              = "beacon:scope:names"
-	keyScopeStats              = "beacon:scope:stats"
-	keyScopesByIATAsPrefix     = "beacon:scopes:iatas:"
-	keyScopeByNamePrefix       = "beacon:scope:name:"
-	keyStatsOverviewPrefix     = "beacon:stats:overview:"
-	keyStatsObservationsPrefix = "beacon:stats:observations:"
-	keyStatsBreakdownPrefix    = "beacon:stats:breakdown:"
-	keyStatsTopNodesPrefix     = "beacon:stats:top-nodes:"
-	keyStatsTopObsPrefix       = "beacon:stats:top-observers:"
-	keyStatsNodeTypes          = "beacon:stats:node-types:"
-	keyRadioPresetsPrefix      = "beacon:radio-presets:"
-	keyNodePrefix              = "beacon:node:"
-	keyNodeNeighborsPrefix     = "beacon:node:neighbors:"
-	keyNodesByIDsPrefix        = "beacon:nodes:ids:"
-	keyObserverPrefix          = "beacon:observer:"
-	keyObserverScopesPrefix    = "beacon:observer:scopes:"
+	keyIATAs                     = "beacon:iatas"
+	keyIATAPrefix                = "beacon:iata:"
+	keyRegions                   = "beacon:regions"
+	keyRegionPrefix              = "beacon:region:"
+	keyRegionSlugPrefix          = "beacon:region:slug:"
+	keyAtlasRegionPrefix         = "beacon:atlas:region:"
+	keyLiveSummaryPrefix         = "beacon:live:summary:"
+	keyScopeNames                = "beacon:scope:names"
+	keyScopeStats                = "beacon:scope:stats"
+	keyScopesByIATAsPrefix       = "beacon:scopes:iatas:"
+	keyScopeByNamePrefix         = "beacon:scope:name:"
+	keyStatsOverviewPrefix       = "beacon:stats:overview:"
+	keyStatsObservationsPrefix   = "beacon:stats:observations:"
+	keyStatsBreakdownPrefix      = "beacon:stats:breakdown:"
+	keyStatsTopNodesPrefix       = "beacon:stats:top-nodes:"
+	keyStatsTopObsPrefix         = "beacon:stats:top-observers:"
+	keyStatsNodeTypes            = "beacon:stats:node-types:"
+	keyStatsSummaryPrefix        = "beacon:stats:summary:"
+	keyStatsRegionsPrefix        = "beacon:stats:regions:"
+	keyStatsPayloadsPrefix       = "beacon:stats:payloads:"
+	keyStatsRFHealthPrefix       = "beacon:stats:rf-health:"
+	keyStatsObserverHealthPrefix = "beacon:stats:observer-health:"
+	keyRadioPresetsPrefix        = "beacon:radio-presets:"
+	keyNodePrefix                = "beacon:node:"
+	keyNodeNeighborsPrefix       = "beacon:node:neighbors:"
+	keyNodesByIDsPrefix          = "beacon:nodes:ids:"
+	keyObserverPrefix            = "beacon:observer:"
+	keyObserverScopesPrefix      = "beacon:observer:scopes:"
 )
 
 // CachedReader wraps an api.Reader with a Redis caching layer.
@@ -51,6 +58,8 @@ type CachedReader struct {
 // All fields should be non-zero — use ResolveTTLs to build this from
 // config with fallback to the global TTL and then the default.
 type CacheTTLs struct {
+	Atlas     time.Duration
+	Live      time.Duration
 	Stats     time.Duration
 	Reference time.Duration
 	Nodes     time.Duration
@@ -66,6 +75,88 @@ func NewCachedReader(inner api.Reader, c *Client, ttl CacheTTLs) api.Reader {
 		c:     c,
 		ttl:   ttl,
 	}
+}
+
+func slugOrAll(slug string) string {
+	if slug == "" {
+		return "all"
+	}
+	return slug
+}
+
+func iataCacheSegment(iatas []string) string {
+	if len(iatas) == 0 {
+		return "all"
+	}
+	sorted := append([]string(nil), iatas...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",")
+}
+
+func atlasCacheWindow(since, until time.Time, bucket time.Duration) (time.Time, time.Time) {
+	if bucket <= 0 {
+		bucket = 30 * time.Second
+	}
+	if until.IsZero() {
+		until = time.Now()
+	}
+	until = until.Truncate(bucket)
+	if since.IsZero() {
+		since = until.Add(-24 * time.Hour)
+	} else {
+		since = since.Truncate(bucket)
+	}
+	return since, until
+}
+
+func liveCacheWindow(since, until time.Time, bucket time.Duration) (time.Time, time.Time) {
+	if bucket <= 0 {
+		bucket = 5 * time.Second
+	}
+	if until.IsZero() {
+		until = time.Now()
+	}
+	until = until.Truncate(bucket)
+	if since.IsZero() {
+		since = until.Add(-15 * time.Minute)
+	} else {
+		since = since.Truncate(bucket)
+	}
+	return since, until
+}
+
+func statsCacheWindow(since, until time.Time, ttl time.Duration) (time.Time, time.Time) {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	if until.IsZero() {
+		until = time.Now()
+	}
+	until = until.Truncate(ttl)
+	if since.IsZero() {
+		since = until.Add(-24 * time.Hour)
+	} else {
+		since = since.Truncate(ttl)
+	}
+	return since, until
+}
+
+func statsFilterCacheKey(prefix string, filter api.StatsFilter, cacheBucket time.Duration) string {
+	since, until := statsCacheWindow(filter.Since, filter.Until, cacheBucket)
+	return fmt.Sprintf(
+		"%s%s:%d:%d:%s:%d",
+		prefix,
+		iataCacheSegment(filter.IATAs),
+		since.UnixMilli(),
+		until.UnixMilli(),
+		filter.Bucket,
+		filter.Limit,
+	)
+}
+
+func statsObserverHealthCacheKey(prefix string, filter api.StatsObserverHealthFilter, cacheBucket time.Duration) string {
+	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
+	return fmt.Sprintf("%s:%d", base, int64(filter.StaleAfter/time.Minute))
 }
 
 // InvalidateNode removes the cached entries for a node by UUID.
@@ -115,6 +206,20 @@ func (cr *CachedReader) GetRegionBySlug(ctx context.Context, slug string) (*api.
 	return getOrSet(ctx, cr.c, keyRegionSlugPrefix+slug, cr.ttl.Reference, func() (*api.Region, error) {
 		return cr.inner.GetRegionBySlug(ctx, slug)
 	})
+}
+
+// GetRegionAtlasSummary implements [api.Reader].
+func (cr *CachedReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
+	since, until = atlasCacheWindow(since, until, cr.ttl.Atlas)
+	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasRegionPrefix, slugOrAll(slug), since.UnixMilli(), until.UnixMilli())
+	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.RegionAtlasSummary, error) {
+		return cr.inner.GetRegionAtlasSummary(ctx, slug, since, until)
+	})
+}
+
+// ListAtlasReplay implements [api.Reader].
+func (cr *CachedReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
+	return cr.inner.ListAtlasReplay(ctx, regionSlug, since, until, cursor, limit)
 }
 
 // GetScopeNames implements [api.Reader].
@@ -216,6 +321,46 @@ func (cr *CachedReader) GetStatsNodeTypes(ctx context.Context, iatas []string) (
 	key := fmt.Sprintf("%s%s", keyStatsNodeTypes, segment)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.NodeTypeCount, error) {
 		return cr.inner.GetStatsNodeTypes(ctx, iatas)
+	})
+}
+
+// GetStatsSummary implements [api.Reader].
+func (cr *CachedReader) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*api.StatsSummary, error) {
+	key := statsFilterCacheKey(keyStatsSummaryPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsSummary, error) {
+		return cr.inner.GetStatsSummary(ctx, filter)
+	})
+}
+
+// GetStatsRegions implements [api.Reader].
+func (cr *CachedReader) GetStatsRegions(ctx context.Context, filter api.StatsFilter) (*api.StatsRegions, error) {
+	key := statsFilterCacheKey(keyStatsRegionsPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsRegions, error) {
+		return cr.inner.GetStatsRegions(ctx, filter)
+	})
+}
+
+// GetStatsPayloads implements [api.Reader].
+func (cr *CachedReader) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) (*api.StatsPayloads, error) {
+	key := statsFilterCacheKey(keyStatsPayloadsPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsPayloads, error) {
+		return cr.inner.GetStatsPayloads(ctx, filter)
+	})
+}
+
+// GetStatsRFHealth implements [api.Reader].
+func (cr *CachedReader) GetStatsRFHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsRFHealth, error) {
+	key := statsObserverHealthCacheKey(keyStatsRFHealthPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsRFHealth, error) {
+		return cr.inner.GetStatsRFHealth(ctx, filter)
+	})
+}
+
+// GetStatsObserverHealth implements [api.Reader].
+func (cr *CachedReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
+	key := statsObserverHealthCacheKey(keyStatsObserverHealthPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsObserverHealthResponse, error) {
+		return cr.inner.GetStatsObserverHealth(ctx, filter)
 	})
 }
 
@@ -371,6 +516,20 @@ func (cr *CachedReader) ListPackets(ctx context.Context, payloadType, routeType 
 // ListPacketsAfterID implements [api.Reader].
 func (cr *CachedReader) ListPacketsAfterID(ctx context.Context, afterObservationID int64, payloadType, routeType int16, iatas []string, scope string, limit int32) ([]api.PacketSummary, error) {
 	return cr.inner.ListPacketsAfterID(ctx, afterObservationID, payloadType, routeType, iatas, scope, limit)
+}
+
+// ListLiveBackfill implements [api.Reader]. Backfill is intentionally uncached.
+func (cr *CachedReader) ListLiveBackfill(ctx context.Context, filter api.LiveBackfillFilter) (api.Page[api.LivePacketObservation], error) {
+	return cr.inner.ListLiveBackfill(ctx, filter)
+}
+
+// GetLiveSummary implements [api.Reader].
+func (cr *CachedReader) GetLiveSummary(ctx context.Context, filter api.LiveSummaryFilter) (*api.LiveSummary, error) {
+	filter.Since, filter.Until = liveCacheWindow(filter.Since, filter.Until, cr.ttl.Live)
+	key := fmt.Sprintf("%s%s:%d:%d", keyLiveSummaryPrefix, iataCacheSegment(filter.IATAs), filter.Since.Unix(), filter.Until.Unix())
+	return getOrSet(ctx, cr.c, key, cr.ttl.Live, func() (*api.LiveSummary, error) {
+		return cr.inner.GetLiveSummary(ctx, filter)
+	})
 }
 
 // ListKnownRoutes implements [api.Reader].

@@ -48,7 +48,7 @@ func NodesRouter(reader api.Reader) http.Handler {
 //	@Param		supportsMultibyteTraces	query		bool	false	"Filter by multibyte trace support (true/false); omit for no filter"
 //	@Param		cursor					query		int		false	"last_seen epoch ms of last item for pagination"
 //	@Param		limit					query		int		false	"Max results (default 50)"
-//	@Success	200						{object}	api.Page[api.NodeSummary]
+//	@Success	200						{object}	api.NodeSummaryPage
 //	@Failure	400						{object}	handlers.APIError
 //	@Failure	500						{object}	handlers.APIError
 //	@Router		/nodes [get]
@@ -164,7 +164,7 @@ func getNode(reader api.Reader) http.HandlerFunc {
 //	@Param		nodeId	path		string	true	"Node UUID"
 //	@Param		cursor	query		int		false	"Observation ID of last item for pagination"
 //	@Param		limit	query		int		false	"Max results (default 50)"
-//	@Success	200		{object}	api.Page[api.PacketObservationSummary]
+//	@Success	200		{object}	api.PacketObservationSummaryPage
 //	@Failure	400		{object}	handlers.APIError
 //	@Failure	500		{object}	handlers.APIError
 //	@Router		/nodes/{nodeId}/observations [get]

@@ -204,6 +204,7 @@ func handleClientMessage(ctx context.Context, client *hub.Client, reader api.Rea
 		scope := hub.Scope{
 			IATAs:         iatas,
 			PayloadTypes:  msg.Scope.PayloadTypes,
+			RouteTypes:    msg.Scope.RouteTypes,
 			ChannelHashes: msg.Scope.ChannelHashes,
 			Events:        msg.Scope.Events,
 		}

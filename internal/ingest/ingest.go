@@ -85,8 +85,8 @@ type DB interface {
 	SetPacketDecrypted(ctx context.Context, hash []byte) error
 
 	// InsertObservation inserts a packet_observations row.
-	// Returns (inserted, error); inserted=false means ON CONFLICT DO NOTHING fired.
-	InsertObservation(ctx context.Context, o InsertObservationParams) (bool, error)
+	// Returns (observationID, inserted, error); inserted=false means ON CONFLICT DO NOTHING fired.
+	InsertObservation(ctx context.Context, o InsertObservationParams) (int64, bool, error)
 
 	// SetNodeCapability flips supports_multibyte_paths or supports_multibyte_traces
 	// for a node, never downgrading an existing TRUE.
@@ -287,7 +287,7 @@ func (w *Worker) handleMessage(msg mqtt.Message) {
 	}
 }
 
-func (w *Worker) broadcast(eventType hub.EventType, iata string, payloadType uint8, channelHash string, payload any) {
+func (w *Worker) broadcast(eventType hub.EventType, iata string, payloadType, routeType uint8, channelHash string, payload any) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("ingest[%s]: failed to marshal %s event: %v", w.cfg.BrokerName, eventType, err)
@@ -298,6 +298,7 @@ func (w *Worker) broadcast(eventType hub.EventType, iata string, payloadType uin
 		Payload:     b,
 		IATA:        iata,
 		PayloadType: payloadType,
+		RouteType:   routeType,
 		ChannelHash: channelHash,
 	})
 }

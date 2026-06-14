@@ -42,6 +42,7 @@ type Event struct {
 	// Populated by the ingest layer before calling Broadcast.
 	IATA        string
 	PayloadType uint8
+	RouteType   uint8
 	ChannelHash string // hex string, non-empty only for channelMessage events
 }
 
@@ -51,6 +52,7 @@ type Event struct {
 type Scope struct {
 	IATAs         []string
 	PayloadTypes  []uint8
+	RouteTypes    []uint8
 	ChannelHashes []string
 	Events        []EventType
 }
@@ -95,6 +97,11 @@ func scopeMatches(s Scope, e Event) bool {
 	}
 	if len(s.PayloadTypes) > 0 && !slices.Contains(s.PayloadTypes, e.PayloadType) {
 		return false
+	}
+	if len(s.RouteTypes) > 0 {
+		if e.Type != EventPacketObservation || !slices.Contains(s.RouteTypes, e.RouteType) {
+			return false
+		}
 	}
 	if len(s.ChannelHashes) > 0 && !slices.Contains(s.ChannelHashes, e.ChannelHash) {
 		return false

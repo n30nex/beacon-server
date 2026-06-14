@@ -347,7 +347,7 @@ func (s *Store) UpsertIATA(ctx context.Context, iata string) error {
 	return s.q.UpsertIATA(ctx, iata)
 }
 
-func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservationParams) (bool, error) {
+func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservationParams) (int64, bool, error) {
 	params := sqlc.InsertObservationParams{
 		PacketHash:        o.PacketHash,
 		ObserverID:        o.ObserverID,
@@ -368,12 +368,12 @@ func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservatio
 	}
 	row, err := s.q.InsertObservation(ctx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // conflict, not an error
+		return 0, false, nil // conflict, not an error
 	}
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	return row.ID != 0, nil
+	return row.ID, row.ID != 0, nil
 }
 
 func (s *Store) ListNodeObservations(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (api.Page[api.PacketObservationSummary], error) {

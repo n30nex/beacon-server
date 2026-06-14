@@ -46,7 +46,7 @@ func ObserversRouter(reader api.Reader) http.Handler {
 //	@Param		scope	query		string	false	"Filter by transport scope name e.g. %23bc (URL-encoded #bc)"
 //	@Param		cursor	query		int		false	"last_seen epoch ms of last item for pagination"
 //	@Param		limit	query		int		false	"Max results (default 50)"
-//	@Success	200		{object}	api.Page[api.ObserverSummary]
+//	@Success	200		{object}	api.ObserverSummaryPage
 //	@Failure	400		{object}	handlers.APIError
 //	@Failure	500		{object}	handlers.APIError
 //	@Router		/observers [get]
@@ -128,7 +128,7 @@ func getObserver(reader api.Reader) http.HandlerFunc {
 //	@Param		observerId	path		string	true	"Observer UUID"
 //	@Param		cursor		query		int		false	"Observation ID of last item for pagination"
 //	@Param		limit		query		int		false	"Max results (default 50)"
-//	@Success	200			{object}	api.Page[api.AdvertObservation]
+//	@Success	200			{object}	api.AdvertObservationPage
 //	@Failure	400			{object}	handlers.APIError
 //	@Failure	500			{object}	handlers.APIError
 //	@Router		/observers/{observerId}/adverts [get]

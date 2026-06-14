@@ -36,9 +36,12 @@ func ChannelsRouter(reader api.Reader) http.Handler {
 //	@Produce	json
 //	@Param		hash	query		string	false	"Single-byte channel hash (hex)"
 //	@Param		iata	query		string	false	"Filter by IATA code (case-insensitive)"
+//	@Param		iatas	query		string	false	"Filter by IATA code(s), comma-separated e.g. YVR,YYJ"
+//	@Param		regionId	query		int		false	"Filter by region ID, expands to member IATAs"
+//	@Param		region	query		string	false	"Filter by region slug, expands to member IATAs"
 //	@Param		cursor	query		int		false	"last_seen epoch ms of last item for pagination"
 //	@Param		limit	query		int		false	"Max results (default 50)"
-//	@Success	200		{object}	api.Page[api.ChannelSummary]
+//	@Success	200		{object}	api.ChannelSummaryPage
 //	@Failure	400		{object}	handlers.APIError
 //	@Failure	500		{object}	handlers.APIError
 //	@Router		/channels [get]
@@ -53,7 +56,15 @@ func listChannels(reader api.Reader) http.HandlerFunc {
 			}
 			limit = l
 		}
-		iata := r.URL.Query().Get("iata")
+		iatas := parseIATAs(r)
+		if regionIDStr := r.URL.Query().Get("regionId"); regionIDStr != "" || r.URL.Query().Get("region") != "" {
+			regionIATAs, err := resolveRegionIATAs(r.Context(), regionIDStr, r.URL.Query().Get("region"), reader)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			iatas = append(iatas, regionIATAs...)
+		}
 		var cursor int64
 		if cursorParam := r.URL.Query().Get("cursor"); cursorParam != "" {
 			c, err := strconv.ParseInt(cursorParam, 10, 64)
@@ -76,7 +87,7 @@ func listChannels(reader api.Reader) http.HandlerFunc {
 			}
 			hashHex = h
 		}
-		channels, err := reader.ListChannels(r.Context(), int32(limit), hashHex, iata, cursor)
+		channels, err := reader.ListChannels(r.Context(), int32(limit), hashHex, strings.Join(iatas, ","), cursor)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "internal server error")
 			return

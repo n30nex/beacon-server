@@ -206,7 +206,7 @@ func listPacketsBackfill(reader api.Reader) http.HandlerFunc {
 //	@Tags		Packets
 //	@Produce	json
 //	@Param		packetHash	path		string	true	"Packet hash (hex)"
-//	@Success	200			{object}	api.Packet
+//	@Success	200			{object}	api.PacketDoc
 //	@Failure	400			{object}	handlers.APIError
 //	@Failure	404			{object}	handlers.APIError
 //	@Failure	500			{object}	handlers.APIError

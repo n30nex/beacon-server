@@ -151,7 +151,7 @@ func (w *Worker) handlePayloadTypeSideEffects(ctx context.Context, packet *meshc
 			DefaultScope: defaultScope,
 			Radio:        radioStr,
 		}
-		w.broadcast(hub.EventNodeUpdate, iata, meshcore.PayloadTypeAdvert, "", evt)
+		w.broadcast(hub.EventNodeUpdate, iata, meshcore.PayloadTypeAdvert, 0, "", evt)
 		return
 	}
 	if packet.PayloadType() == meshcore.PayloadTypeGrpTxt {
@@ -214,7 +214,7 @@ func (w *Worker) handlePayloadTypeSideEffects(ctx context.Context, packet *meshc
 				Content:     strings.ReplaceAll(strings.ToValidUTF8(payload.Text, "\uFFFD"), "\x00", ""),
 				SentAt:      time.Unix(int64(payload.Timestamp), 0).UnixMilli(),
 			}
-			w.broadcast(hub.EventChannelMessage, iata, 0, fmt.Sprintf("%02x", grpTxt.ChannelHash), evt)
+			w.broadcast(hub.EventChannelMessage, iata, 0, 0, fmt.Sprintf("%02x", grpTxt.ChannelHash), evt)
 		}
 		return
 	}

@@ -42,6 +42,14 @@ type Reader interface {
 	// Returns nil, pgx.ErrNoRows if the region is not found.
 	GetRegionBySlug(ctx context.Context, slug string) (*Region, error)
 
+	// GetRegionAtlasSummary returns all aggregate data required by the Atlas
+	// regional story view for a named region or the special "all" slug.
+	GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*RegionAtlasSummary, error)
+
+	// ListAtlasReplay returns paginated packets enriched with map-ready path
+	// points for Atlas playback.
+	ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (Page[AtlasReplayPacket], error)
+
 	// ListChannels returns a paginated list of channels ordered by last seen.
 	// Includes both hashtag-derived and explicit key channels.
 	// Pass nil hash to skip hash filtering. Pass empty string iata to return all channels.
@@ -122,6 +130,13 @@ type Reader interface {
 	// ordered oldest first. Used for WS reconnect backfill.
 	ListPacketsAfterID(ctx context.Context, afterObservationID int64, payloadType, routeType int16, iatas []string, scope string, limit int32) ([]PacketSummary, error)
 
+	// ListLiveBackfill returns observation-shaped packet events after a durable
+	// observation cursor. Used by the Live page to heal missed WS bursts.
+	ListLiveBackfill(ctx context.Context, filter LiveBackfillFilter) (Page[LivePacketObservation], error)
+
+	// GetLiveSummary returns a compact, short-window summary for the Live page.
+	GetLiveSummary(ctx context.Context, filter LiveSummaryFilter) (*LiveSummary, error)
+
 	// GetPacket returns full packet detail including all observations with radio settings.
 	// Returns nil, pgx.ErrNoRows if not found.
 	GetPacket(ctx context.Context, packetHash []byte) (*Packet, error)
@@ -157,6 +172,21 @@ type Reader interface {
 
 	// GetStatsNodeTypes returns node counts grouped by type, optionally filtered by IATA.
 	GetStatsNodeTypes(ctx context.Context, iatas []string) ([]NodeTypeCount, error)
+
+	// GetStatsSummary returns the prepared aggregate payload for the Stats overview console.
+	GetStatsSummary(ctx context.Context, filter StatsFilter) (*StatsSummary, error)
+
+	// GetStatsRegions returns per-IATA regional comparison rows and bucketed trends.
+	GetStatsRegions(ctx context.Context, filter StatsFilter) (*StatsRegions, error)
+
+	// GetStatsPayloads returns payload and route totals plus bucketed timelines.
+	GetStatsPayloads(ctx context.Context, filter StatsFilter) (*StatsPayloads, error)
+
+	// GetStatsRFHealth returns RF-health aggregates, telemetry series, and top offenders.
+	GetStatsRFHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsRFHealth, error)
+
+	// GetStatsObserverHealth returns observer-health rows with stale/degraded flags.
+	GetStatsObserverHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsObserverHealthResponse, error)
 
 	// GetScopeNames returns the names of all configured transport scopes, ordered alphabetically.
 	// Use when no geographic filter is applied — returns names only for a lightweight response.

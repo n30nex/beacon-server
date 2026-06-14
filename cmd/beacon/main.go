@@ -19,6 +19,7 @@ import (
 	"github.com/MeshCore-Beacon/beacon-server/db"
 	_ "github.com/MeshCore-Beacon/beacon-server/docs"
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/MeshCore-Beacon/beacon-server/internal/api/handlers"
 	"github.com/MeshCore-Beacon/beacon-server/internal/api/router"
 	"github.com/MeshCore-Beacon/beacon-server/internal/background"
 	"github.com/MeshCore-Beacon/beacon-server/internal/cache"
@@ -145,6 +146,8 @@ func main() {
 
 	// ── Redis cache layer ────────────────────────────────────────────────────
 	var reader api.Reader = store
+	cacheStatus := "disabled"
+	cacheBackend := ""
 	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
 		redisClient := cache.NewClient(
 			redisAddr,
@@ -161,12 +164,16 @@ func main() {
 		)
 		if err := redisClient.Ping(ctx); err != nil {
 			log.Printf("warning: redis unavailable at %s, caching disabled: %v", redisAddr, err)
+			cacheStatus = "degraded"
+			cacheBackend = redisAddr
 		} else {
 			ttls := cache.ResolveTTLs(cfg.Cache)
 			reader = cache.NewCachedReader(store, redisClient, ttls)
 			defer redisClient.Close()
-			log.Printf("cache: Redis connected at %s (stats=%s reference=%s nodes=%s observers=%s)",
-				redisAddr, ttls.Stats, ttls.Reference, ttls.Nodes, ttls.Observers)
+			cacheStatus = "ok"
+			cacheBackend = redisAddr
+			log.Printf("cache: Redis connected at %s (atlas=%s live=%s stats=%s reference=%s nodes=%s observers=%s)",
+				redisAddr, ttls.Atlas, ttls.Live, ttls.Stats, ttls.Reference, ttls.Nodes, ttls.Observers)
 		}
 	}
 
@@ -278,7 +285,11 @@ func main() {
 	go scheduler.Start(ctx)
 
 	// ── HTTP server ──────────────────────────────────────────────────────────
-	r := router.New(h, reader, []*ingest.Worker{broker1, broker2}, maxConnsPerIP, cfg.CORS)
+	r := router.New(h, reader, []*ingest.Worker{broker1, broker2}, maxConnsPerIP, cfg.CORS, handlers.HealthConfig{
+		Version:      version,
+		CacheStatus:  cacheStatus,
+		CacheBackend: cacheBackend,
+	})
 
 	srv := &http.Server{
 		Addr:    addr,

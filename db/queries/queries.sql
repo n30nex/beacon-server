@@ -566,9 +566,9 @@ ON CONFLICT (channel_hash) WHERE key_fingerprint IS NULL DO UPDATE SET
 RETURNING id;
 
 -- name: ListChannels :many
--- Returns channels ordered by last seen, optionally filtered by hash and/or IATA.
--- Pass NULL for hash to skip hash filtering. Pass empty string for iata to skip IATA filtering.
--- IATA filter returns channels that have active packets in that IATA (case-insensitive).
+-- Returns channels ordered by last seen, optionally filtered by hash and/or IATA(s).
+-- Pass NULL for hash to skip hash filtering. Pass empty string for iatas to skip IATA filtering.
+-- IATA filter returns channels that have active packets in any of the comma-separated IATAs.
 -- Pass cursor=0 to start from the beginning (cursor is last_seen epoch ms).
 SELECT DISTINCT c.* FROM channels c
 WHERE ($1::bytea IS NULL OR c.channel_hash = $1)
@@ -576,7 +576,7 @@ WHERE ($1::bytea IS NULL OR c.channel_hash = $1)
     SELECT 1 FROM packets p
     JOIN packet_observations po ON po.packet_hash = p.packet_hash
     WHERE p.channel_hash = c.channel_hash
-      AND po.iata ILIKE $2
+      AND po.iata = ANY(string_to_array(upper($2::text), ','))
   ))
   AND ($3::timestamptz IS NULL OR c.last_seen < $3)
 ORDER BY c.last_seen DESC

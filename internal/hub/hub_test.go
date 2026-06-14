@@ -47,6 +47,19 @@ func TestScopeMatches_PayloadTypeFilter(t *testing.T) {
 	}
 }
 
+func TestScopeMatches_RouteTypeFilter(t *testing.T) {
+	s := Scope{Events: []EventType{EventPacketObservation}, RouteTypes: []uint8{2}}
+	if !scopeMatches(s, Event{Type: EventPacketObservation, RouteType: 2}) {
+		t.Error("expected route type 2 to match")
+	}
+	if scopeMatches(s, Event{Type: EventPacketObservation, RouteType: 1}) {
+		t.Error("expected route type 1 not to match")
+	}
+	if scopeMatches(s, Event{Type: EventObserverStatus, RouteType: 2}) {
+		t.Error("expected route type filter not to match non-packet events")
+	}
+}
+
 func TestScopeMatches_ChannelHashFilter(t *testing.T) {
 	s := Scope{Events: []EventType{EventChannelMessage}, ChannelHashes: []string{"ab"}}
 	if !scopeMatches(s, Event{Type: EventChannelMessage, ChannelHash: "ab"}) {
@@ -62,8 +75,9 @@ func TestScopeMatches_AllFiltersPass(t *testing.T) {
 		Events:       []EventType{EventPacketObservation},
 		IATAs:        []string{"YVR"},
 		PayloadTypes: []uint8{4},
+		RouteTypes:   []uint8{1},
 	}
-	if !scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YVR", PayloadType: 4}) {
+	if !scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YVR", PayloadType: 4, RouteType: 1}) {
 		t.Error("expected all-matching event to pass")
 	}
 }
@@ -73,11 +87,15 @@ func TestScopeMatches_OneFilterFails(t *testing.T) {
 		Events:       []EventType{EventPacketObservation},
 		IATAs:        []string{"YVR"},
 		PayloadTypes: []uint8{4},
+		RouteTypes:   []uint8{1},
 	}
-	if scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YYC", PayloadType: 4}) {
+	if scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YYC", PayloadType: 4, RouteType: 1}) {
 		t.Error("expected wrong IATA to fail")
 	}
-	if scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YVR", PayloadType: 5}) {
+	if scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YVR", PayloadType: 5, RouteType: 1}) {
 		t.Error("expected wrong payload type to fail")
+	}
+	if scopeMatches(s, Event{Type: EventPacketObservation, IATA: "YVR", PayloadType: 4, RouteType: 2}) {
+		t.Error("expected wrong route type to fail")
 	}
 }

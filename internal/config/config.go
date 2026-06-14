@@ -83,6 +83,14 @@ type CacheConfig struct {
 // CacheTTLsConfig holds per-category TTL overrides for the cache layer.
 // Each field is optional — omit it in config to inherit the global TTL.
 type CacheTTLsConfig struct {
+	// Atlas controls regional Atlas summary caching. Atlas windows roll with
+	// "now", so this defaults shorter than the broader stats cache.
+	Atlas duration `yaml:"atlas"`
+
+	// Live controls the TTL for the Live console summary hot path.
+	// Live windows roll with "now", so this defaults to a very short TTL.
+	Live duration `yaml:"live"`
+
 	// Stats controls the TTL for aggregated network statistics endpoints
 	// (overview, observations, payload breakdown, top nodes/observers, radio presets, scope stats).
 	// These are backed by materialized views refreshed hourly, so values under 1m are rarely useful.

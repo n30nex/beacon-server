@@ -95,6 +95,8 @@ cache:
   # Global default TTL for all cached responses. Defaults to 1h if not set.
   ttl: "1h"
   ttls:
+    # Atlas regional summaries use rolling "now" windows, so keep this short.
+    atlas: "30s"
     # Aggregated stats endpoints (overview, observations, breakdowns, top nodes/observers,
     # radio presets, scope stats). Backed by materialized views refreshed hourly.
     stats: "1h"

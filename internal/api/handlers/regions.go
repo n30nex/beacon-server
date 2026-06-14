@@ -99,6 +99,10 @@ func parseIATAs(r *http.Request) []string {
 func resolveRegionIATAs(ctx context.Context, regionID, regionSlug string, reader api.Reader) ([]string, error) {
 	var region *api.Region
 	var err error
+	regionSlug = strings.TrimSpace(regionSlug)
+	if regionID == "" && (regionSlug == "" || strings.EqualFold(regionSlug, "all") || regionSlug == "*") {
+		return nil, nil
+	}
 	switch {
 	case regionID != "":
 		rid, e := strconv.ParseInt(regionID, 10, 32)
