@@ -327,9 +327,6 @@ LEFT JOIN transport_scopes ts ON ts.id = p.scope_id
 WHERE p.trace_tag = decode($1, 'hex')
 ORDER BY p.first_heard_at ASC;
 
--- name: GetPacketObservationCount :one
-SELECT COUNT(*) FROM packet_observations WHERE packet_hash = $1;
-
 -- name: ListPackets :many
 -- Returns packets with the latest observation rolled in for display.
 -- Pass cursor=0 to start from the beginning.
@@ -407,28 +404,37 @@ DELETE FROM packets WHERE last_heard_at < $1;
 -- ============================================================
 
 -- name: InsertObservation :one
-INSERT INTO packet_observations (
-  packet_hash,
-  observer_id,
-  iata,
-  heard_at,
-  path_length_byte,
-  hash_size,
-  hop_count,
-  path_bytes,
-  rssi,
-  snr,
-  propagation_time_ms,
-  radio_freq_mhz,
-  spread_factor,
-  bandwidth_khz,
-  coding_rate,
-  source_broker
-) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+-- Inserts an observation and returns its id plus the total observation count
+-- for the packet (including this row) in one round-trip. The data-modifying
+-- CTE's own insert is not visible to the count subquery (Postgres semantics),
+-- so the count of pre-existing rows is incremented by one for this row. On a
+-- dedup conflict the CTE yields no rows and the query returns no rows.
+WITH ins AS (
+  INSERT INTO packet_observations (
+    packet_hash,
+    observer_id,
+    iata,
+    heard_at,
+    path_length_byte,
+    hash_size,
+    hop_count,
+    path_bytes,
+    rssi,
+    snr,
+    propagation_time_ms,
+    radio_freq_mhz,
+    spread_factor,
+    bandwidth_khz,
+    coding_rate,
+    source_broker
+  ) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+  )
+  ON CONFLICT (packet_hash, observer_id, heard_at) DO NOTHING
+  RETURNING id, packet_hash
 )
-ON CONFLICT (packet_hash, observer_id, heard_at) DO NOTHING
-RETURNING *;
+SELECT ins.id, (SELECT COUNT(*) FROM packet_observations po WHERE po.packet_hash = ins.packet_hash) + 1 AS observation_count
+FROM ins;
 
 -- name: ListObservationsForPacket :many
 SELECT po.*, o.display_name AS observer_name

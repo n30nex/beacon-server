@@ -273,7 +273,14 @@ func (s *Store) ListObserverAdverts(ctx context.Context, observerID uuid.UUID, c
 
 func (s *Store) UpdateObserverStatus(ctx context.Context, p ingest.UpdateObserverStatusParams) (uuid.UUID, error) {
 	params := sqlc.UpdateObserverStatusParams{PublicKey: p.PublicKey, Column2: p.DisplayName, Column3: p.ObserverType, SoftwareVersion: &p.SoftwareVersion, HardwareModel: &p.HardwareModel, FirmwareVersion: &p.FirmwareVersion, FirmwareBuild: &p.FirmwareBuild, RadioFreqMhz: &p.RadioFreqMHz, RadioSf: &p.RadioSF, RadioBwKhz: &p.RadioBWKHz, RadioCr: &p.RadioCR, BatteryLevel: p.BatteryLevel, UptimeSeconds: p.UptimeSeconds, StatusMetadata: p.StatusMetadata}
-	return s.q.UpdateObserverStatus(ctx, params)
+	id, err := s.q.UpdateObserverStatus(ctx, params)
+	if err != nil {
+		return id, err
+	}
+	// Radio settings may have changed; drop the cached copy so the next packet
+	// re-reads the authoritative values.
+	s.radio.invalidate(id)
+	return id, nil
 }
 
 func (s *Store) GetObserverLastIATA(ctx context.Context, observerID uuid.UUID) (string, error) {
@@ -281,6 +288,12 @@ func (s *Store) GetObserverLastIATA(ctx context.Context, observerID uuid.UUID) (
 }
 
 func (s *Store) GetObserverRadio(ctx context.Context, observerID uuid.UUID) (ingest.RadioSettings, error) {
+	v, ok, gen := s.radio.lookup(observerID)
+	if ok {
+		return v, nil
+	}
+	// Cache miss — the generation sampled above is our snapshot. Read from DB,
+	// then cache the result unless an invalidation raced us (see radioCache docs).
 	row, err := s.q.GetObserverRadio(ctx, observerID)
 	if err != nil {
 		return ingest.RadioSettings{}, err
@@ -298,6 +311,7 @@ func (s *Store) GetObserverRadio(ctx context.Context, observerID uuid.UUID) (ing
 	if row.RadioCr != nil {
 		settings.CR = *row.RadioCr
 	}
+	s.radio.store(observerID, settings, gen)
 	return settings, nil
 }
 

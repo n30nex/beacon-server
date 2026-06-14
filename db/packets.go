@@ -255,7 +255,43 @@ func (s *Store) GetPacket(ctx context.Context, packetHash []byte) (*api.Packet, 
 		}
 		p.TransportCodes = tc
 	}
-	for _, v := range obsRows {
+	// Resolve path hashes for every observation in batch: one query per distinct
+	// (iata, hashSize) group rather than one per observation (avoids N+1). Each
+	// observation then looks up its own prefixes in the shared result. This is
+	// equivalent to per-observation resolution because resolving a given
+	// (iata, prefix) pair is independent of the other prefixes in the query.
+	type resolveKey struct {
+		iata string
+		size int
+	}
+	obsHashes := make([][][]byte, len(obsRows))
+	groupHashes := map[resolveKey][][]byte{}
+	for i, v := range obsRows {
+		if v.PathBytes == nil || v.HashSize == 0 {
+			continue
+		}
+		hashSize := int(v.HashSize)
+		hashes := make([][]byte, 0, len(v.PathBytes)/hashSize)
+		for j := 0; j+hashSize <= len(v.PathBytes); j += hashSize {
+			hashes = append(hashes, v.PathBytes[j:j+hashSize])
+		}
+		obsHashes[i] = hashes
+		k := resolveKey{iata: v.Iata, size: hashSize}
+		groupHashes[k] = append(groupHashes[k], hashes...)
+	}
+	resolvedByGroup := make(map[resolveKey]map[string][]api.ResolvedPathEntry, len(groupHashes))
+	resolveFailed := make(map[resolveKey]bool, len(groupHashes))
+	for k, hashes := range groupHashes {
+		resolved, err := s.ResolvePathHashes(ctx, k.iata, hashes)
+		if err != nil {
+			log.Printf("store: path resolution failed for packet %s (iata %s): %v", hex.EncodeToString(packetHash), k.iata, err)
+			resolveFailed[k] = true
+			continue
+		}
+		resolvedByGroup[k] = resolved
+	}
+
+	for i, v := range obsRows {
 		obs := api.PacketObservationDetail{
 			ID:           v.ID,
 			ObserverID:   v.ObserverID,
@@ -274,16 +310,10 @@ func (s *Store) GetPacket(ctx context.Context, packetHash []byte) (*api.Packet, 
 		prop := int32(v.HeardAt.Time.Sub(minHeardAt).Milliseconds())
 		obs.PropagationTimeMs = &prop
 		resolvedPath := []api.ResolvedHop{}
-		if v.PathBytes != nil && v.HashSize > 0 {
-			hashSize := int(v.HashSize)
-			hashes := make([][]byte, 0, len(v.PathBytes)/hashSize)
-			for i := 0; i+hashSize <= len(v.PathBytes); i += hashSize {
-				hashes = append(hashes, v.PathBytes[i:i+hashSize])
-			}
-			resolved, err := s.ResolvePathHashes(ctx, v.Iata, hashes)
-			if err != nil {
-				log.Printf("store: path resolution failed for observation %d: %v", v.ID, err)
-			} else {
+		if hashes := obsHashes[i]; hashes != nil {
+			k := resolveKey{iata: v.Iata, size: int(v.HashSize)}
+			if !resolveFailed[k] {
+				resolved := resolvedByGroup[k]
 				for _, hash := range hashes {
 					key := hex.EncodeToString(hash)
 					entries := resolved[key]
@@ -347,7 +377,7 @@ func (s *Store) UpsertIATA(ctx context.Context, iata string) error {
 	return s.q.UpsertIATA(ctx, iata)
 }
 
-func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservationParams) (bool, error) {
+func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservationParams) (bool, int64, error) {
 	params := sqlc.InsertObservationParams{
 		PacketHash:        o.PacketHash,
 		ObserverID:        o.ObserverID,
@@ -368,12 +398,12 @@ func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservatio
 	}
 	row, err := s.q.InsertObservation(ctx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // conflict, not an error
+		return false, 0, nil // conflict, not an error
 	}
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return row.ID != 0, nil
+	return row.ID != 0, row.ObservationCount, nil
 }
 
 func (s *Store) ListNodeObservations(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (api.Page[api.PacketObservationSummary], error) {
@@ -413,10 +443,6 @@ func (s *Store) ListNodeObservations(ctx context.Context, nodeID uuid.UUID, curs
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
 	}, nil
-}
-
-func (s *Store) GetPacketObservationCount(ctx context.Context, packetHash []byte) (int64, error) {
-	return s.q.GetPacketObservationCount(ctx, packetHash)
 }
 
 func (s *Store) DeleteOldPackets(ctx context.Context, cutoff time.Time) error {

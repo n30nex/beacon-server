@@ -93,15 +93,9 @@ func Handler(h *hub.Hub, reader api.Reader, maxConnsPerIP int) http.HandlerFunc 
 					if !ok {
 						return
 					}
-					msg := map[string]any{
-						"v":     1,
-						"type":  "event",
-						"event": evt.Type,
-						"data":  json.RawMessage(evt.Payload),
-					}
-					msgBytes, _ := json.Marshal(msg)
-					err = conn.Write(ctx, websocket.MessageText, msgBytes)
-					if err != nil {
+					// evt.Framed is the complete frame, serialised once by the
+					// hub and shared across all clients — write it verbatim.
+					if err = conn.Write(ctx, websocket.MessageText, evt.Framed); err != nil {
 						log.Printf("ws[%s]: failed to write hub event: %v", connID, err)
 						cancel()
 						return
