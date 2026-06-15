@@ -31,6 +31,7 @@ func StatsRouter(reader api.Reader) http.Handler {
 	r.Get("/summary", getStatsSummary(reader))
 	r.Get("/regions", getStatsRegions(reader))
 	r.Get("/payloads", getStatsPayloads(reader))
+	r.Get("/hash", getStatsHashAnalytics(reader))
 	r.Get("/rf-health", getStatsRFHealth(reader))
 	r.Get("/observer-health", getStatsObserverHealth(reader))
 	r.Get("/observer-compare", getStatsObserverCompare(reader))
@@ -308,6 +309,40 @@ func getStatsPayloads(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, payloads)
+	}
+}
+
+// getStatsHashAnalytics godoc
+//
+//	@Summary	Stats path-hash analytics and collision risk
+//	@Tags		Stats
+//	@Produce	json
+//	@Param		iatas	query	string	false	"Comma-separated IATA codes"
+//	@Param		regionId	query	int	false	"Filter by region ID, expands to member IATAs"
+//	@Param		region	query	string	false	"Filter by region slug, expands to member IATAs"
+//	@Param		range	query	string	false	"Window preset: 24h, 7d, or 30d"
+//	@Param		since	query	int	false	"Window start as epoch milliseconds"
+//	@Param		until	query	int	false	"Window end as epoch milliseconds"
+//	@Param		bucket	query	string	false	"Bucket size: 1h, 6h, or 24h"
+//	@Param		limit	query	int	false	"Max risky prefixes and inconsistent samples, clamped to 1-500"
+//	@Success	200	{object}	api.StatsHashAnalytics
+//	@Failure	400	{object}	handlers.APIError
+//	@Failure	500	{object}	handlers.APIError
+//	@Router		/stats/hash [get]
+func getStatsHashAnalytics(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filter, err := parseStatsFilter(r, reader, 25)
+		if err != nil {
+			respondStatsParamError(w, err)
+			return
+		}
+		hashes, err := reader.GetStatsHashAnalytics(r.Context(), filter)
+		if err != nil {
+			log.Printf("api: GetStatsHashAnalytics failed: %v", err)
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, hashes)
 	}
 }
 

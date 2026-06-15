@@ -168,6 +168,10 @@ func (stubReader) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) 
 	return &api.StatsPayloads{}, nil
 }
 
+func (stubReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
+	return &api.StatsHashAnalytics{}, nil
+}
+
 func (stubReader) GetStatsRFHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsRFHealth, error) {
 	return &api.StatsRFHealth{}, nil
 }

@@ -35,6 +35,7 @@ const (
 	keyStatsSummaryPrefix         = "beacon:stats:summary:"
 	keyStatsRegionsPrefix         = "beacon:stats:regions:"
 	keyStatsPayloadsPrefix        = "beacon:stats:payloads:"
+	keyStatsHashPrefix            = "beacon:stats:hash:"
 	keyStatsRFHealthPrefix        = "beacon:stats:rf-health:"
 	keyStatsObserverHealthPrefix  = "beacon:stats:observer-health:"
 	keyStatsObserverComparePrefix = "beacon:stats:observer-compare:"
@@ -356,6 +357,14 @@ func (cr *CachedReader) GetStatsPayloads(ctx context.Context, filter api.StatsFi
 	key := statsFilterCacheKey(keyStatsPayloadsPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsPayloads, error) {
 		return cr.inner.GetStatsPayloads(ctx, filter)
+	})
+}
+
+// GetStatsHashAnalytics implements [api.Reader].
+func (cr *CachedReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
+	key := statsFilterCacheKey(keyStatsHashPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsHashAnalytics, error) {
+		return cr.inner.GetStatsHashAnalytics(ctx, filter)
 	})
 }
 

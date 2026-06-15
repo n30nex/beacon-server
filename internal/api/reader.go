@@ -185,6 +185,9 @@ type Reader interface {
 	// GetStatsPayloads returns payload and route totals plus bucketed timelines.
 	GetStatsPayloads(ctx context.Context, filter StatsFilter) (*StatsPayloads, error)
 
+	// GetStatsHashAnalytics returns CoreScope-style path-hash distribution and collision-risk analytics.
+	GetStatsHashAnalytics(ctx context.Context, filter StatsFilter) (*StatsHashAnalytics, error)
+
 	// GetStatsRFHealth returns RF-health aggregates, telemetry series, and top offenders.
 	GetStatsRFHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsRFHealth, error)
 

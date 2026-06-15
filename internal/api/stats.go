@@ -195,6 +195,60 @@ type StatsPayloads struct {
 	RouteTimeline   []StatsRouteBucket     `json:"routeTimeline"`
 }
 
+// StatsHashSizeCount summarizes observation and packet counts for one path-hash size.
+type StatsHashSizeCount struct {
+	HashSize         int16 `json:"hashSize"`
+	ObservationCount int64 `json:"observationCount"`
+	PacketCount      int64 `json:"packetCount"`
+}
+
+// StatsHashTimelinePoint is a bucketed path-hash size count.
+type StatsHashTimelinePoint struct {
+	T                int64 `json:"t"`
+	HashSize         int16 `json:"hashSize"`
+	ObservationCount int64 `json:"observationCount"`
+	PacketCount      int64 `json:"packetCount"`
+}
+
+// StatsHashCollisionPrefix highlights short path-hash prefixes shared by multiple packets.
+type StatsHashCollisionPrefix struct {
+	Prefix           string `json:"prefix"`
+	HashSize         int16  `json:"hashSize"`
+	IATA             string `json:"iata"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+	ObserverCount    int64  `json:"observerCount"`
+	FirstHeard       int64  `json:"firstHeard"`
+	LastHeard        int64  `json:"lastHeard"`
+}
+
+// StatsHashInconsistentPacket shows a packet observed with multiple path-hash sizes.
+type StatsHashInconsistentPacket struct {
+	PacketHash       string   `json:"packetHash"`
+	MinHashSize      int16    `json:"minHashSize"`
+	MaxHashSize      int16    `json:"maxHashSize"`
+	HashSizes        []int16  `json:"hashSizes"`
+	IATAs            []string `json:"iatas"`
+	ObservationCount int64    `json:"observationCount"`
+	FirstHeard       int64    `json:"firstHeard"`
+	LastHeard        int64    `json:"lastHeard"`
+}
+
+// StatsHashAnalytics is the response envelope for /stats/hash.
+type StatsHashAnalytics struct {
+	ServerTime                int64                         `json:"serverTime"`
+	Window                    StatsWindow                   `json:"window"`
+	TotalPackets              int64                         `json:"totalPackets"`
+	TotalObservations         int64                         `json:"totalObservations"`
+	MultibyteObservations     int64                         `json:"multibyteObservations"`
+	InconsistentPacketCount   int64                         `json:"inconsistentPacketCount"`
+	CollisionPrefixCount      int64                         `json:"collisionPrefixCount"`
+	SizeMix                   []StatsHashSizeCount          `json:"sizeMix"`
+	Timeline                  []StatsHashTimelinePoint      `json:"timeline"`
+	RiskyPrefixes             []StatsHashCollisionPrefix    `json:"riskyPrefixes"`
+	InconsistentPacketSamples []StatsHashInconsistentPacket `json:"inconsistentPacketSamples"`
+}
+
 // StatsObserverHealthFlags exposes the operator-health classification for one observer.
 type StatsObserverHealthFlags struct {
 	Stale         bool `json:"stale"`

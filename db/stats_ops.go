@@ -599,6 +599,229 @@ ORDER BY bucket ASC, COUNT(*) DESC`, filter.Since, filter.Until, iataFilter, buc
 	return response, nil
 }
 
+func (s *Store) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
+	filter = normalizeStatsFilter(filter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	response := &api.StatsHashAnalytics{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter),
+	}
+
+	if err := s.pool.QueryRow(ctx, `
+WITH inconsistent AS (
+  SELECT po.packet_hash
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.packet_hash
+  HAVING COUNT(DISTINCT po.hash_size) > 1
+),
+risky AS (
+  SELECT 1
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND po.path_bytes IS NOT NULL
+    AND po.hash_size > 0
+  GROUP BY encode(substring(po.path_bytes from 1 for LEAST(po.hash_size::int, 2)), 'hex'), po.hash_size, po.iata
+  HAVING COUNT(DISTINCT po.packet_hash) > 1
+)
+SELECT
+  COUNT(DISTINCT po.packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(*) FILTER (WHERE po.hash_size > 1)::bigint,
+  (SELECT COUNT(*)::bigint FROM inconsistent),
+  (SELECT COUNT(*)::bigint FROM risky)
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))`,
+		filter.Since, filter.Until, iataFilter).Scan(
+		&response.TotalPackets,
+		&response.TotalObservations,
+		&response.MultibyteObservations,
+		&response.InconsistentPacketCount,
+		&response.CollisionPrefixCount,
+	); err != nil {
+		return nil, err
+	}
+
+	sizeMix, err := s.getStatsHashSizeMix(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.SizeMix = sizeMix
+
+	timeline, err := s.getStatsHashTimeline(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.Timeline = timeline
+
+	risky, err := s.getStatsHashRiskyPrefixes(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.RiskyPrefixes = risky
+
+	inconsistent, err := s.getStatsHashInconsistentPackets(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.InconsistentPacketSamples = inconsistent
+	return response, nil
+}
+
+func (s *Store) getStatsHashSizeMix(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashSizeCount, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT po.hash_size, COUNT(*)::bigint, COUNT(DISTINCT po.packet_hash)::bigint
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY po.hash_size
+ORDER BY po.hash_size ASC`, filter.Since, filter.Until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsHashSizeCount{}
+	for rows.Next() {
+		var item api.StatsHashSizeCount
+		if err := rows.Scan(&item.HashSize, &item.ObservationCount, &item.PacketCount); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsHashTimeline(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashTimelinePoint, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
+  po.hash_size,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT po.packet_hash)::bigint
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY bucket, po.hash_size
+ORDER BY bucket ASC, po.hash_size ASC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	points := []api.StatsHashTimelinePoint{}
+	for rows.Next() {
+		var point api.StatsHashTimelinePoint
+		var bucket time.Time
+		if err := rows.Scan(&bucket, &point.HashSize, &point.ObservationCount, &point.PacketCount); err != nil {
+			return nil, err
+		}
+		point.T = bucket.UnixMilli()
+		points = append(points, point)
+	}
+	return points, rows.Err()
+}
+
+func (s *Store) getStatsHashRiskyPrefixes(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashCollisionPrefix, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  encode(substring(po.path_bytes from 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
+  po.hash_size,
+  po.iata,
+  COUNT(DISTINCT po.packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT po.observer_id)::bigint,
+  MIN(po.heard_at),
+  MAX(po.heard_at)
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  AND po.path_bytes IS NOT NULL
+  AND po.hash_size > 0
+GROUP BY prefix, po.hash_size, po.iata
+HAVING COUNT(DISTINCT po.packet_hash) > 1
+ORDER BY COUNT(DISTINCT po.packet_hash) DESC, COUNT(*) DESC, MAX(po.heard_at) DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsHashCollisionPrefix{}
+	for rows.Next() {
+		var item api.StatsHashCollisionPrefix
+		var firstHeard, lastHeard time.Time
+		if err := rows.Scan(
+			&item.Prefix,
+			&item.HashSize,
+			&item.IATA,
+			&item.PacketCount,
+			&item.ObservationCount,
+			&item.ObserverCount,
+			&firstHeard,
+			&lastHeard,
+		); err != nil {
+			return nil, err
+		}
+		item.FirstHeard = firstHeard.UnixMilli()
+		item.LastHeard = lastHeard.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsHashInconsistentPackets(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashInconsistentPacket, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  encode(po.packet_hash, 'hex') AS packet_hash,
+  MIN(po.hash_size),
+  MAX(po.hash_size),
+  array_agg(DISTINCT po.hash_size ORDER BY po.hash_size),
+  array_agg(DISTINCT po.iata ORDER BY po.iata),
+  COUNT(*)::bigint,
+  MIN(po.heard_at),
+  MAX(po.heard_at)
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY po.packet_hash
+HAVING COUNT(DISTINCT po.hash_size) > 1
+ORDER BY COUNT(*) DESC, MAX(po.heard_at) DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsHashInconsistentPacket{}
+	for rows.Next() {
+		var item api.StatsHashInconsistentPacket
+		var firstHeard, lastHeard time.Time
+		if err := rows.Scan(
+			&item.PacketHash,
+			&item.MinHashSize,
+			&item.MaxHashSize,
+			&item.HashSizes,
+			&item.IATAs,
+			&item.ObservationCount,
+			&firstHeard,
+			&lastHeard,
+		); err != nil {
+			return nil, err
+		}
+		item.FirstHeard = firstHeard.UnixMilli()
+		item.LastHeard = lastHeard.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
 	filter = normalizeObserverHealthFilter(filter)
 	iataFilter := statsIATAFilter(filter.IATAs)

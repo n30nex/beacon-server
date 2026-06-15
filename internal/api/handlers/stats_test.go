@@ -22,6 +22,11 @@ type statsObserverCompareReader struct {
 	filter api.StatsObserverCompareFilter
 }
 
+type statsHashReader struct {
+	stubReader
+	filter api.StatsFilter
+}
+
 func (r *statsObserverCompareReader) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
 	r.filter = filter
 	return &api.StatsObserverCompare{
@@ -31,6 +36,18 @@ func (r *statsObserverCompareReader) GetStatsObserverCompare(ctx context.Context
 			StatsObserverHealth: api.StatsObserverHealth{ObserverID: filter.ObserverIDs[0], IATA: "YVR", ObservationCount: 8},
 			PacketCount:         4,
 		}},
+	}, nil
+}
+
+func (r *statsHashReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
+	r.filter = filter
+	return &api.StatsHashAnalytics{
+		ServerTime:              123,
+		Window:                  api.StatsWindow{Since: filter.Since.UnixMilli(), Until: filter.Until.UnixMilli(), Bucket: filter.Bucket},
+		TotalPackets:            3,
+		TotalObservations:       7,
+		CollisionPrefixCount:    1,
+		InconsistentPacketCount: 1,
 	}, nil
 }
 
@@ -119,6 +136,45 @@ func TestGetStatsPayloads_InvalidBucket(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHashAnalytics_InvalidBucket(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/hash", getStatsHashAnalytics(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash?bucket=15m", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHashAnalytics_FilterContract(t *testing.T) {
+	reader := &statsHashReader{}
+	r := chi.NewRouter()
+	r.Get("/stats/hash", getStatsHashAnalytics(reader))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash?since=1000&until=5000&bucket=1h&iatas=yvr,YOW&limit=12", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !reader.filter.Since.Equal(time.UnixMilli(1000)) || !reader.filter.Until.Equal(time.UnixMilli(5000)) {
+		t.Fatalf("unexpected window %#v", reader.filter)
+	}
+	if reader.filter.Bucket != "1h" || reader.filter.Limit != 12 {
+		t.Fatalf("unexpected bucket/limit %#v", reader.filter)
+	}
+	if got := strings.Join(reader.filter.IATAs, ","); got != "YVR,YOW" {
+		t.Fatalf("unexpected iatas %q", got)
+	}
+	var body api.StatsHashAnalytics
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.TotalPackets != 3 || body.CollisionPrefixCount != 1 {
+		t.Fatalf("unexpected response %#v", body)
 	}
 }
 
