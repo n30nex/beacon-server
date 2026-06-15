@@ -6019,6 +6019,9 @@
                 "lastHeard": {
                     "type": "integer"
                 },
+                "nodeCount": {
+                    "type": "integer"
+                },
                 "observationCount": {
                     "type": "integer"
                 },
@@ -6046,6 +6049,9 @@
                     "type": "string"
                 },
                 "lastHeard": {
+                    "type": "integer"
+                },
+                "nodeCount": {
                     "type": "integer"
                 },
                 "observationCount": {

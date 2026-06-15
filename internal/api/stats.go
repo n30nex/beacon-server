@@ -216,6 +216,7 @@ type StatsHashCollisionPrefix struct {
 	HashSize         int16  `json:"hashSize"`
 	IATA             string `json:"iata"`
 	PacketCount      int64  `json:"packetCount"`
+	NodeCount        int64  `json:"nodeCount,omitempty"`
 	ObservationCount int64  `json:"observationCount"`
 	ObserverCount    int64  `json:"observerCount"`
 	FirstHeard       int64  `json:"firstHeard"`
@@ -228,6 +229,7 @@ type StatsHashCollisionCell struct {
 	IATA             string `json:"iata"`
 	PrefixCount      int64  `json:"prefixCount"`
 	PacketCount      int64  `json:"packetCount"`
+	NodeCount        int64  `json:"nodeCount,omitempty"`
 	ObservationCount int64  `json:"observationCount"`
 	ObserverCount    int64  `json:"observerCount"`
 	FirstHeard       int64  `json:"firstHeard"`

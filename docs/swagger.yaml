@@ -1630,6 +1630,8 @@ definitions:
         type: string
       lastHeard:
         type: integer
+      nodeCount:
+        type: integer
       observationCount:
         type: integer
       observerCount:
@@ -1648,6 +1650,8 @@ definitions:
       iata:
         type: string
       lastHeard:
+        type: integer
+      nodeCount:
         type: integer
       observationCount:
         type: integer

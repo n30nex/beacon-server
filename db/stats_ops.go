@@ -619,29 +619,32 @@ WITH inconsistent AS (
   GROUP BY po.packet_hash
   HAVING COUNT(DISTINCT po.hash_size) > 1
 ),
-risky_hops AS (
+short_prefixes AS (
   SELECT
-    encode(substring(po.path_bytes from (h.hop_index::int * po.hash_size::int) + 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
-    po.hash_size,
-    po.iata,
-    po.packet_hash
-  FROM packet_observations po
-  CROSS JOIN LATERAL generate_series(
-    0,
-    GREATEST(COALESCE((octet_length(po.path_bytes) / NULLIF(po.hash_size::int, 0)) - 1, -1), -1)
-  ) AS h(hop_index)
-  WHERE po.heard_at >= $1
-    AND po.heard_at <= $2
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-    AND po.path_bytes IS NOT NULL
-    AND po.hash_size > 0
-    AND octet_length(po.path_bytes) >= po.hash_size
+    encode(
+      CASE sizes.hash_size
+        WHEN 1 THEN ns.prefix_1
+        WHEN 2 THEN ns.prefix_2
+        WHEN 3 THEN ns.prefix_3
+        ELSE ns.prefix_4
+      END,
+      'hex'
+    ) AS prefix,
+    sizes.hash_size::smallint AS hash_size,
+    ns.iata::text AS iata,
+    ns.node_id
+  FROM node_short_ids ns
+  JOIN node_iatas ni ON ni.node_id = ns.node_id AND ni.iata = ns.iata
+  CROSS JOIN (VALUES (1), (2), (3), (4)) AS sizes(hash_size)
+  WHERE ni.last_heard >= $1
+    AND ni.last_heard <= $2
+    AND ($3::text = '' OR ns.iata = ANY(string_to_array($3::text, ',')))
 ),
 risky AS (
   SELECT 1
-  FROM risky_hops
+  FROM short_prefixes
   GROUP BY prefix, hash_size, iata
-  HAVING COUNT(DISTINCT packet_hash) > 1
+  HAVING COUNT(DISTINCT node_id) > 1
 )
 SELECT
   COUNT(DISTINCT po.packet_hash)::bigint,
@@ -749,51 +752,56 @@ ORDER BY bucket ASC, po.hash_size ASC`, filter.Since, filter.Until, iataFilter, 
 	return points, rows.Err()
 }
 
-func statsHashHopPrefixCTE() string {
+func statsHashShortIDCollisionCTE() string {
 	return `
-WITH hop_prefixes AS (
+WITH short_prefixes AS (
   SELECT
-    encode(substring(po.path_bytes from (h.hop_index::int * po.hash_size::int) + 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
-    po.hash_size,
-    po.iata,
-    po.packet_hash,
-    po.observer_id,
-    po.heard_at
-  FROM packet_observations po
-  CROSS JOIN LATERAL generate_series(
-    0,
-    GREATEST(COALESCE((octet_length(po.path_bytes) / NULLIF(po.hash_size::int, 0)) - 1, -1), -1)
-  ) AS h(hop_index)
-  WHERE po.heard_at >= $1
-    AND po.heard_at <= $2
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-    AND po.path_bytes IS NOT NULL
-    AND po.hash_size > 0
-    AND octet_length(po.path_bytes) >= po.hash_size
+    encode(
+      CASE sizes.hash_size
+        WHEN 1 THEN ns.prefix_1
+        WHEN 2 THEN ns.prefix_2
+        WHEN 3 THEN ns.prefix_3
+        ELSE ns.prefix_4
+      END,
+      'hex'
+    ) AS prefix,
+    sizes.hash_size::smallint AS hash_size,
+    ns.iata::text AS iata,
+    ns.node_id,
+    COALESCE(ni.observation_count, 0)::bigint AS observation_count,
+    ni.first_heard,
+    ni.last_heard
+  FROM node_short_ids ns
+  JOIN node_iatas ni ON ni.node_id = ns.node_id AND ni.iata = ns.iata
+  CROSS JOIN (VALUES (1), (2), (3), (4)) AS sizes(hash_size)
+  WHERE ni.last_heard >= $1
+    AND ni.last_heard <= $2
+    AND ($3::text = '' OR ns.iata = ANY(string_to_array($3::text, ',')))
 ),
 risky_keys AS (
   SELECT prefix, hash_size, iata
-  FROM hop_prefixes
+  FROM short_prefixes
   GROUP BY prefix, hash_size, iata
-  HAVING COUNT(DISTINCT packet_hash) > 1
+  HAVING COUNT(DISTINCT node_id) > 1
 )`
 }
 
 func (s *Store) getStatsHashRiskyPrefixes(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashCollisionPrefix, error) {
-	rows, err := s.pool.Query(ctx, statsHashHopPrefixCTE()+`
+	rows, err := s.pool.Query(ctx, statsHashShortIDCollisionCTE()+`
 SELECT
-  hp.prefix,
-  hp.hash_size,
-  hp.iata,
-  COUNT(DISTINCT hp.packet_hash)::bigint,
-  COUNT(*)::bigint,
-  COUNT(DISTINCT hp.observer_id)::bigint,
-  MIN(hp.heard_at),
-  MAX(hp.heard_at)
-FROM hop_prefixes hp
+  sp.prefix,
+  sp.hash_size,
+  sp.iata,
+  COUNT(DISTINCT sp.node_id)::bigint AS packet_count,
+  COUNT(DISTINCT sp.node_id)::bigint AS node_count,
+  COALESCE(SUM(sp.observation_count), 0)::bigint AS observation_count,
+  0::bigint AS observer_count,
+  MIN(sp.first_heard),
+  MAX(sp.last_heard)
+FROM short_prefixes sp
 JOIN risky_keys rk USING (prefix, hash_size, iata)
-GROUP BY hp.prefix, hp.hash_size, hp.iata
-ORDER BY COUNT(DISTINCT hp.packet_hash) DESC, COUNT(*) DESC, MAX(hp.heard_at) DESC
+GROUP BY sp.prefix, sp.hash_size, sp.iata
+ORDER BY COUNT(DISTINCT sp.node_id) DESC, COALESCE(SUM(sp.observation_count), 0) DESC, MAX(sp.last_heard) DESC
 LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 	if err != nil {
 		return nil, err
@@ -808,6 +816,7 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 			&item.HashSize,
 			&item.IATA,
 			&item.PacketCount,
+			&item.NodeCount,
 			&item.ObservationCount,
 			&item.ObserverCount,
 			&firstHeard,
@@ -823,20 +832,21 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 }
 
 func (s *Store) getStatsHashCollisionMatrix(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashCollisionCell, error) {
-	rows, err := s.pool.Query(ctx, statsHashHopPrefixCTE()+`
+	rows, err := s.pool.Query(ctx, statsHashShortIDCollisionCTE()+`
 SELECT
-  hp.hash_size,
-  hp.iata,
-  COUNT(DISTINCT hp.prefix)::bigint,
-  COUNT(DISTINCT hp.packet_hash)::bigint,
-  COUNT(*)::bigint,
-  COUNT(DISTINCT hp.observer_id)::bigint,
-  MIN(hp.heard_at),
-  MAX(hp.heard_at)
-FROM hop_prefixes hp
+  sp.hash_size,
+  sp.iata,
+  COUNT(DISTINCT sp.prefix)::bigint,
+  COUNT(DISTINCT sp.node_id)::bigint AS packet_count,
+  COUNT(DISTINCT sp.node_id)::bigint AS node_count,
+  COALESCE(SUM(sp.observation_count), 0)::bigint AS observation_count,
+  0::bigint AS observer_count,
+  MIN(sp.first_heard),
+  MAX(sp.last_heard)
+FROM short_prefixes sp
 JOIN risky_keys rk USING (prefix, hash_size, iata)
-GROUP BY hp.hash_size, hp.iata
-ORDER BY hp.hash_size ASC, COUNT(DISTINCT hp.prefix) DESC, hp.iata ASC`, filter.Since, filter.Until, iataFilter)
+GROUP BY sp.hash_size, sp.iata
+ORDER BY sp.hash_size ASC, COUNT(DISTINCT sp.prefix) DESC, sp.iata ASC`, filter.Since, filter.Until, iataFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -850,6 +860,7 @@ ORDER BY hp.hash_size ASC, COUNT(DISTINCT hp.prefix) DESC, hp.iata ASC`, filter.
 			&item.IATA,
 			&item.PrefixCount,
 			&item.PacketCount,
+			&item.NodeCount,
 			&item.ObservationCount,
 			&item.ObserverCount,
 			&firstHeard,

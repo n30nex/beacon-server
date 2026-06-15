@@ -6021,6 +6021,9 @@ const docTemplate = `{
                 "lastHeard": {
                     "type": "integer"
                 },
+                "nodeCount": {
+                    "type": "integer"
+                },
                 "observationCount": {
                     "type": "integer"
                 },
@@ -6048,6 +6051,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lastHeard": {
+                    "type": "integer"
+                },
+                "nodeCount": {
                     "type": "integer"
                 },
                 "observationCount": {
