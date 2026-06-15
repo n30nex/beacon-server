@@ -104,9 +104,9 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | Node detail panel | Shared NodeDetailPanel across Atlas/Live/Map/Nodes | Done | `NodeDetailPanel.tsx`; `App.tsx` | Continue sharing one detail implementation | Existing | P0 |
 | QR codes | None | Missing | No QR implementation found | Add QR card for node identity/share links if useful locally | QR generation utility | P3 |
 | Advert timeline | Node detail has current metadata/neighbors | Missing | `NodeDetailPanel.tsx` | Add advert history endpoint and detail timeline | Store advert events/history | P2 |
-| Per-node analytics | Compact node analytics API and NodeDetailPanel section | Partial | `internal/api/handlers/nodes.go`; `db/nodes.go`; `NodeDetailPanel.tsx` | First-pass panel covers KPIs, mix, signal buckets, and peers; dedicated chart page still needed | Node analytics UI route | P0 |
+| Per-node analytics | Compact node analytics API and NodeDetailPanel section | Partial | `internal/api/handlers/nodes.go`; `db/nodes.go`; `NodeDetailPanel.tsx` | Panel covers KPIs, mix, signal buckets, hourly activity heatmap, peers, and reach graph; dedicated chart page still needed | Node analytics UI route | P0 |
 | Per-node reach page/API | Verified route-neighborhood overlay plus compact reach analytics in the shared node detail panel | Partial | `/api/v1/nodes/{id}/route-neighborhood`; `/api/v1/nodes/{id}/reach`; `NodeDetailPanel.tsx` | Dedicated reach page, cache invalidation hooks, and richer peer graph still remain | Graph aggregate API | P0 |
-| Peer graph/hourly heatmap | Route-neighborhood map overlay only | Partial | `useRouteOverlays.ts` | Add ECharts peer graph and hourly activity heatmap | Node analytics API | P1 |
+| Peer graph/hourly heatmap | Shared NodeDetailPanel has compact hourly heatmap plus peer/reach graph | Partial | `NodeDetailPanel.tsx`; `useRouteOverlays.ts` | Dedicated ECharts page and richer graph interactions still remain | Node analytics API | P1 |
 
 ### Observers
 
