@@ -28,6 +28,7 @@ func NodesRouter(reader api.Reader) http.Handler {
 	r.Route("/{nodeId}", func(r chi.Router) {
 		r.Get("/", getNode(reader))
 		r.Get("/analytics", getNodeAnalytics(reader))
+		r.Get("/adverts", listNodeAdverts(reader))
 		r.Get("/observations", listNodeObservations(reader))
 		r.Get("/neighbors", listNodeNeighbors(reader))
 		r.Get("/reach", getNodeReach(reader))
@@ -218,6 +219,52 @@ func getNodeAnalytics(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, analytics)
+	}
+}
+
+// listNodeAdverts godoc
+//
+//	@Summary	List advert packets originating from a node
+//	@Tags		Nodes
+//	@Produce	json
+//	@Param		nodeId	path		string	true	"Node UUID"
+//	@Param		cursor	query		int		false	"Observation ID of last item for pagination"
+//	@Param		limit	query		int		false	"Max results (default 50)"
+//	@Success	200		{object}	api.NodeAdvertObservationPage
+//	@Failure	400		{object}	handlers.APIError
+//	@Failure	500		{object}	handlers.APIError
+//	@Router		/nodes/{nodeId}/adverts [get]
+func listNodeAdverts(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nodeID, err := uuid.Parse(chi.URLParam(r, "nodeId"))
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid node ID")
+			return
+		}
+		var cursor int64
+		if cursorParam := r.URL.Query().Get("cursor"); cursorParam != "" {
+			c, err := strconv.ParseInt(cursorParam, 10, 64)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "cursor must be an integer")
+				return
+			}
+			cursor = c
+		}
+		var limit int32 = 50
+		if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+			l, err := strconv.ParseInt(limitParam, 10, 32)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "limit must be an integer")
+				return
+			}
+			limit = int32(l)
+		}
+		adverts, err := reader.ListNodeAdverts(r.Context(), nodeID, cursor, limit)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, adverts)
 	}
 }
 

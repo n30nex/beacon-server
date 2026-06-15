@@ -347,6 +347,146 @@ LIMIT 8`)
 	return out, nil
 }
 
+func (s *Store) ListNodeAdverts(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (api.Page[api.NodeAdvertObservation], error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  po.id,
+  encode(po.packet_hash, 'hex') AS packet_hash_hex,
+  p.payload_type,
+  po.iata,
+  po.heard_at,
+  po.rssi,
+  po.snr,
+  po.hop_count,
+  NULLIF(p.parsed_payload #>> '{appData,name}', '') AS advertised_name,
+  NULLIF(p.parsed_payload #>> '{appData,flags,deviceRole}', '')::smallint AS advertised_node_type,
+  NULLIF(p.parsed_payload #>> '{appData,flags,deviceRoleName}', '') AS advertised_node_type_name,
+  NULLIF(p.parsed_payload #>> '{appData,latitude}', '')::double precision AS advertised_lat,
+  NULLIF(p.parsed_payload #>> '{appData,longitude}', '')::double precision AS advertised_lng,
+  NULLIF(p.parsed_payload #>> '{appData,flags,raw}', '') AS flags_raw,
+  NULLIF(p.parsed_payload #>> '{appData,flags,hasLocation}', '')::boolean AS has_location,
+  NULLIF(p.parsed_payload #>> '{appData,flags,hasName}', '')::boolean AS has_name
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE n.id = $1
+  AND p.payload_type = 4
+  AND ($2 = 0 OR po.id > $2)
+ORDER BY po.id ASC
+LIMIT $3`, nodeID, cursor, limit+1)
+	if err != nil {
+		log.Printf("api: ListNodeAdverts failed: %v", err)
+		return api.Page[api.NodeAdvertObservation]{}, err
+	}
+	defer rows.Close()
+
+	items := make([]api.NodeAdvertObservation, 0, limit)
+	for rows.Next() {
+		var item api.NodeAdvertObservation
+		var heardAt time.Time
+		var rssi pgtype.Int2
+		var snr pgtype.Float4
+		var hopCount pgtype.Int2
+		var advertisedName pgtype.Text
+		var advertisedNodeType pgtype.Int2
+		var advertisedNodeTypeName pgtype.Text
+		var advertisedLat pgtype.Float8
+		var advertisedLng pgtype.Float8
+		var flagsRaw pgtype.Text
+		var hasLocation pgtype.Bool
+		var hasName pgtype.Bool
+		if err := rows.Scan(
+			&item.ID,
+			&item.PacketHash,
+			&item.PayloadType,
+			&item.IATA,
+			&heardAt,
+			&rssi,
+			&snr,
+			&hopCount,
+			&advertisedName,
+			&advertisedNodeType,
+			&advertisedNodeTypeName,
+			&advertisedLat,
+			&advertisedLng,
+			&flagsRaw,
+			&hasLocation,
+			&hasName,
+		); err != nil {
+			return api.Page[api.NodeAdvertObservation]{}, err
+		}
+		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
+		item.HeardAt = heardAt.UnixMilli()
+		if rssi.Valid {
+			v := rssi.Int16
+			item.RSSI = &v
+		}
+		if snr.Valid {
+			v := snr.Float32
+			item.SNR = &v
+		}
+		if hopCount.Valid {
+			v := hopCount.Int16
+			item.HopCount = &v
+		}
+		if advertisedName.Valid {
+			v := advertisedName.String
+			item.AdvertisedName = &v
+		}
+		if advertisedNodeType.Valid {
+			v := advertisedNodeType.Int16
+			item.AdvertisedNodeType = &v
+			if !advertisedNodeTypeName.Valid {
+				name := api.NodeTypeName(v)
+				item.AdvertisedNodeTypeName = &name
+			}
+		}
+		if advertisedNodeTypeName.Valid {
+			v := advertisedNodeTypeName.String
+			item.AdvertisedNodeTypeName = &v
+		}
+		if advertisedLat.Valid {
+			v := advertisedLat.Float64
+			item.AdvertisedLat = &v
+		}
+		if advertisedLng.Valid {
+			v := advertisedLng.Float64
+			item.AdvertisedLng = &v
+		}
+		if flagsRaw.Valid {
+			v := flagsRaw.String
+			item.FlagsRaw = &v
+		}
+		if hasLocation.Valid {
+			v := hasLocation.Bool
+			item.HasLocation = &v
+		}
+		if hasName.Valid {
+			v := hasName.Bool
+			item.HasName = &v
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return api.Page[api.NodeAdvertObservation]{}, err
+	}
+
+	hasMore := len(items) > int(limit)
+	if hasMore {
+		items = items[:limit]
+	}
+	var nextCursor *int64
+	if hasMore {
+		last := items[len(items)-1].ID
+		nextCursor = &last
+	}
+	return api.Page[api.NodeAdvertObservation]{
+		Items:      items,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
+}
+
 func normalizeNodeAnalyticsFilter(filter api.NodeAnalyticsFilter) (time.Time, time.Time, string) {
 	until := filter.Until
 	if until.IsZero() {

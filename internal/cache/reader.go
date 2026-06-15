@@ -567,6 +567,11 @@ func (cr *CachedReader) ListNodeObservations(ctx context.Context, nodeID uuid.UU
 	return cr.inner.ListNodeObservations(ctx, nodeID, cursor, limit)
 }
 
+// ListNodeAdverts implements [api.Reader].
+func (cr *CachedReader) ListNodeAdverts(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (api.Page[api.NodeAdvertObservation], error) {
+	return cr.inner.ListNodeAdverts(ctx, nodeID, cursor, limit)
+}
+
 // GetNodeAnalytics implements [api.Reader]. Node analytics is detail-panel scoped and bounded by
 // window filters, so the first parity pass leaves it uncached.
 func (cr *CachedReader) GetNodeAnalytics(ctx context.Context, nodeID uuid.UUID, filter api.NodeAnalyticsFilter) (*api.NodeAnalytics, error) {

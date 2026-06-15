@@ -140,6 +140,20 @@ type AdvertObservation struct {
 	NodePublicKey *string `json:"nodePublicKey,omitempty"` // hex-encoded
 }
 
+// NodeAdvertObservation is an advert packet emitted by a specific node,
+// including the advertised AppData snapshot decoded from the packet payload.
+type NodeAdvertObservation struct {
+	PacketObservationSummary
+	AdvertisedName         *string  `json:"advertisedName,omitempty"`
+	AdvertisedNodeType     *int16   `json:"advertisedNodeType,omitempty"`
+	AdvertisedNodeTypeName *string  `json:"advertisedNodeTypeName,omitempty"`
+	AdvertisedLat          *float64 `json:"advertisedLat,omitempty"`
+	AdvertisedLng          *float64 `json:"advertisedLng,omitempty"`
+	FlagsRaw               *string  `json:"flagsRaw,omitempty"`
+	HasLocation            *bool    `json:"hasLocation,omitempty"`
+	HasName                *bool    `json:"hasName,omitempty"`
+}
+
 // PacketObservationSummary is a lightweight packet+observation pair used in
 // list contexts such as observer adverts and node observations.
 type PacketObservationSummary struct {

@@ -44,6 +44,41 @@ type nodeReachReader struct {
 	routes []api.KnownRoute
 }
 
+type nodeAdvertsReader struct {
+	stubReader
+	cursor int64
+	limit  int32
+	nodeID uuid.UUID
+}
+
+func (r *nodeAdvertsReader) ListNodeAdverts(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (api.Page[api.NodeAdvertObservation], error) {
+	r.nodeID = nodeID
+	r.cursor = cursor
+	r.limit = limit
+	name := "Field Relay"
+	nodeType := int16(2)
+	nodeTypeName := "repeater"
+	lat := 45.4215
+	lng := -75.6972
+	return api.Page[api.NodeAdvertObservation]{
+		Items: []api.NodeAdvertObservation{{
+			PacketObservationSummary: api.PacketObservationSummary{
+				ID:              42,
+				PacketHash:      "abcd",
+				PayloadType:     4,
+				PayloadTypeName: "advert",
+				IATA:            "YOW",
+				HeardAt:         1234,
+			},
+			AdvertisedName:         &name,
+			AdvertisedNodeType:     &nodeType,
+			AdvertisedNodeTypeName: &nodeTypeName,
+			AdvertisedLat:          &lat,
+			AdvertisedLng:          &lng,
+		}},
+	}, nil
+}
+
 func testResolvedNode(id uuid.UUID, name string, lat, lng float64) *api.ResolvedNode {
 	return &api.ResolvedNode{
 		ID:        id,
@@ -132,6 +167,61 @@ func TestListNodeObservations_InvalidLimit(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestListNodeAdverts_InvalidUUID(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/adverts", listNodeAdverts(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/bad/adverts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestListNodeAdverts_InvalidCursor(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/adverts", listNodeAdverts(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/00000000-0000-0000-0000-000000000001/adverts?cursor=bad", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestListNodeAdverts_InvalidLimit(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/adverts", listNodeAdverts(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/00000000-0000-0000-0000-000000000001/adverts?limit=bad", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestListNodeAdverts_FilterContract(t *testing.T) {
+	reader := &nodeAdvertsReader{}
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/adverts", listNodeAdverts(reader))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/00000000-0000-0000-0000-000000000001/adverts?cursor=7&limit=9", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if reader.nodeID != uuid.MustParse("00000000-0000-0000-0000-000000000001") || reader.cursor != 7 || reader.limit != 9 {
+		t.Fatalf("unexpected reader args node=%s cursor=%d limit=%d", reader.nodeID, reader.cursor, reader.limit)
+	}
+	var body api.Page[api.NodeAdvertObservation]
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].AdvertisedName == nil || *body.Items[0].AdvertisedName != "Field Relay" {
+		t.Fatalf("unexpected body %#v", body)
 	}
 }
 

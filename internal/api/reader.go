@@ -120,6 +120,10 @@ type Reader interface {
 	// Pass cursor=0 to start from the beginning.
 	ListNodeObservations(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (Page[PacketObservationSummary], error)
 
+	// ListNodeAdverts returns a paginated list of advert observations originating from a node.
+	// Pass cursor=0 to start from the beginning.
+	ListNodeAdverts(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (Page[NodeAdvertObservation], error)
+
 	// GetNodeAnalytics returns CoreScope-style activity, signal, and peer aggregates for a node.
 	GetNodeAnalytics(ctx context.Context, nodeID uuid.UUID, filter NodeAnalyticsFilter) (*NodeAnalytics, error)
 

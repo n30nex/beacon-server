@@ -52,6 +52,13 @@ type AdvertObservationPage struct {
 	HasMore    bool                `json:"hasMore"`
 }
 
+// NodeAdvertObservationPage documents the generic Page[NodeAdvertObservation] response for Swagger.
+type NodeAdvertObservationPage struct {
+	Items      []NodeAdvertObservation `json:"items"`
+	NextCursor *int64                  `json:"nextCursor,omitempty"`
+	HasMore    bool                    `json:"hasMore"`
+}
+
 // PacketDoc documents Packet for Swagger without exposing json.RawMessage,
 // which the generator cannot resolve as a schema type.
 type PacketDoc struct {
