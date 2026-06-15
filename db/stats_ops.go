@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/google/uuid"
 )
 
 const (
@@ -700,6 +701,356 @@ LIMIT $5`, filter.Since, filter.Until, iataFilter, staleCutoff, filter.Limit)
 	}
 	response.Summary = summarizeObserverHealth(response.Items)
 	return response, nil
+}
+
+func (s *Store) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
+	filter.StatsObserverHealthFilter = normalizeObserverHealthFilter(filter.StatsObserverHealthFilter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	observerIDs := observerIDSegment(filter.ObserverIDs)
+	response := &api.StatsObserverCompare{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter.StatsFilter),
+	}
+	if observerIDs == "" {
+		return response, nil
+	}
+
+	items, err := s.getStatsObserverCompareItems(ctx, filter, iataFilter, observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	response.Items = items
+	if err := s.fillObserverCompareMix(ctx, filter, iataFilter, observerIDs, response.Items); err != nil {
+		return nil, err
+	}
+	shared, err := s.getObserverCompareSharedIATAs(ctx, filter, iataFilter, observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	response.SharedIATAs = shared
+	series, err := s.getObserverCompareSeries(ctx, filter, iataFilter, observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	response.Series = series
+	return response, nil
+}
+
+func observerIDSegment(ids []uuid.UUID) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, id.String())
+	}
+	return strings.Join(parts, ",")
+}
+
+func (s *Store) getStatsObserverCompareItems(ctx context.Context, filter api.StatsObserverCompareFilter, iataFilter, observerIDs string) ([]api.StatsObserverCompareItem, error) {
+	staleCutoff := filter.Until.Add(-filter.StaleAfter)
+	rows, err := s.pool.Query(ctx, `
+WITH selected AS (
+  SELECT unnest(string_to_array($5::text, ',')::uuid[]) AS observer_id
+),
+latest_iata AS (
+  SELECT DISTINCT ON (po.observer_id)
+    po.observer_id,
+    po.iata,
+    po.heard_at
+  FROM packet_observations po
+  JOIN selected s ON s.observer_id = po.observer_id
+  WHERE ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY po.observer_id, po.heard_at DESC
+),
+window_counts AS (
+  SELECT
+    po.observer_id,
+    COUNT(DISTINCT po.packet_hash)::bigint AS packet_count,
+    COUNT(*)::bigint AS observation_count
+  FROM packet_observations po
+  JOIN selected s ON s.observer_id = po.observer_id
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.observer_id
+),
+latest_tel AS (
+  SELECT DISTINCT ON (ot.observer_id)
+    ot.observer_id,
+    ot.reported_at,
+    ot.battery_voltage_mv,
+    ot.airtime_tx_pct,
+    ot.airtime_rx_pct,
+    ot.noise_floor_db,
+    ot.queue_length,
+    ot.receive_errors
+  FROM observer_telemetry ot
+  JOIN selected s ON s.observer_id = ot.observer_id
+  ORDER BY ot.observer_id, ot.reported_at DESC
+),
+window_tel AS (
+  SELECT
+    ot.observer_id,
+    AVG(ot.noise_floor_db)::real AS avg_noise_floor_db,
+    AVG(ot.airtime_tx_pct)::real AS avg_airtime_tx_pct,
+    AVG(ot.airtime_rx_pct)::real AS avg_airtime_rx_pct,
+    AVG(ot.battery_voltage_mv)::int AS avg_battery_mv,
+    MAX(ot.queue_length)::int AS max_queue_length,
+    SUM(COALESCE(ot.receive_errors, 0))::bigint AS receive_errors_sum
+  FROM observer_telemetry ot
+  JOIN selected s ON s.observer_id = ot.observer_id
+  WHERE ot.reported_at >= $1
+    AND ot.reported_at <= $2
+  GROUP BY ot.observer_id
+)
+SELECT
+  o.id,
+  o.display_name,
+  o.observer_type,
+  COALESCE(li.iata, '') AS iata,
+  CASE WHEN COALESCE(o.last_status_at, o.last_seen) >= $4 THEN 'online' ELSE 'offline' END AS status,
+  COALESCE(li.heard_at, o.last_status_at, o.last_seen) AS last_heard,
+  COALESCE(wc.observation_count, 0)::bigint,
+  COALESCE(wc.packet_count, 0)::bigint,
+  lt.reported_at,
+  lt.battery_voltage_mv,
+  lt.noise_floor_db,
+  lt.airtime_tx_pct,
+  lt.airtime_rx_pct,
+  lt.queue_length,
+  lt.receive_errors,
+  wt.avg_noise_floor_db,
+  wt.avg_airtime_tx_pct,
+  wt.avg_airtime_rx_pct,
+  wt.avg_battery_mv,
+  wt.max_queue_length,
+  COALESCE(wt.receive_errors_sum, 0)::bigint
+FROM selected s
+JOIN observers o ON o.id = s.observer_id
+LEFT JOIN latest_iata li ON li.observer_id = o.id
+LEFT JOIN window_counts wc ON wc.observer_id = o.id
+LEFT JOIN latest_tel lt ON lt.observer_id = o.id
+LEFT JOIN window_tel wt ON wt.observer_id = o.id
+WHERE ($3::text = '' OR li.iata IS NOT NULL OR wc.observation_count IS NOT NULL)
+ORDER BY array_position(string_to_array($5::text, ',')::uuid[], o.id)`, filter.Since, filter.Until, iataFilter, staleCutoff, observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []api.StatsObserverCompareItem{}
+	for rows.Next() {
+		var item api.StatsObserverCompareItem
+		var lastHeard time.Time
+		var telemetryAt *time.Time
+		if err := rows.Scan(
+			&item.ObserverID,
+			&item.DisplayName,
+			&item.ObserverType,
+			&item.IATA,
+			&item.Status,
+			&lastHeard,
+			&item.ObservationCount,
+			&item.PacketCount,
+			&telemetryAt,
+			&item.BatteryMV,
+			&item.NoiseFloorDB,
+			&item.AirtimeTxPct,
+			&item.AirtimeRxPct,
+			&item.QueueLength,
+			&item.ReceiveErrors,
+			&item.AvgNoiseFloorDB,
+			&item.AvgAirtimeTxPct,
+			&item.AvgAirtimeRxPct,
+			&item.AvgBatteryMV,
+			&item.MaxQueueLength,
+			&item.ReceiveErrorsSum,
+		); err != nil {
+			return nil, err
+		}
+		item.LastHeard = lastHeard.UnixMilli()
+		if telemetryAt != nil {
+			t := telemetryAt.UnixMilli()
+			item.TelemetryAt = &t
+		}
+		classifyObserverHealth(&item.StatsObserverHealth, staleCutoff)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) fillObserverCompareMix(ctx context.Context, filter api.StatsObserverCompareFilter, iataFilter, observerIDs string, items []api.StatsObserverCompareItem) error {
+	byID := make(map[uuid.UUID]*api.StatsObserverCompareItem, len(items))
+	for i := range items {
+		byID[items[i].ObserverID] = &items[i]
+	}
+	payloadRows, err := s.pool.Query(ctx, `
+SELECT po.observer_id, p.payload_type, COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+WHERE po.observer_id = ANY(string_to_array($5::text, ',')::uuid[])
+  AND po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY po.observer_id, p.payload_type
+ORDER BY po.observer_id, COUNT(*) DESC, p.payload_type ASC`, filter.Since, filter.Until, iataFilter, filter.Limit, observerIDs)
+	if err != nil {
+		return err
+	}
+	for payloadRows.Next() {
+		var observerID uuid.UUID
+		var item api.PayloadBreakdownItem
+		if err := payloadRows.Scan(&observerID, &item.PayloadType, &item.Count); err != nil {
+			payloadRows.Close()
+			return err
+		}
+		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
+		if target := byID[observerID]; target != nil {
+			target.PayloadMix = append(target.PayloadMix, item)
+		}
+	}
+	payloadRows.Close()
+	if err := payloadRows.Err(); err != nil {
+		return err
+	}
+
+	routeRows, err := s.pool.Query(ctx, `
+SELECT po.observer_id, p.route_type, COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+WHERE po.observer_id = ANY(string_to_array($5::text, ',')::uuid[])
+  AND po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY po.observer_id, p.route_type
+ORDER BY po.observer_id, COUNT(*) DESC, p.route_type ASC`, filter.Since, filter.Until, iataFilter, filter.Limit, observerIDs)
+	if err != nil {
+		return err
+	}
+	defer routeRows.Close()
+	for routeRows.Next() {
+		var observerID uuid.UUID
+		var item api.LiveRouteMixItem
+		if err := routeRows.Scan(&observerID, &item.RouteType, &item.Count); err != nil {
+			return err
+		}
+		item.RouteTypeName = api.RouteTypeName(item.RouteType)
+		if target := byID[observerID]; target != nil {
+			target.RouteMix = append(target.RouteMix, item)
+		}
+	}
+	return routeRows.Err()
+}
+
+func (s *Store) getObserverCompareSharedIATAs(ctx context.Context, filter api.StatsObserverCompareFilter, iataFilter, observerIDs string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT po.iata
+FROM packet_observations po
+WHERE po.observer_id = ANY(string_to_array($5::text, ',')::uuid[])
+  AND po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY po.iata
+HAVING COUNT(DISTINCT po.observer_id) = $4
+ORDER BY po.iata ASC`, filter.Since, filter.Until, iataFilter, int64(len(filter.ObserverIDs)), observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var iata string
+		if err := rows.Scan(&iata); err != nil {
+			return nil, err
+		}
+		items = append(items, iata)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getObserverCompareSeries(ctx context.Context, filter api.StatsObserverCompareFilter, iataFilter, observerIDs string) ([]api.StatsObserverComparePoint, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH selected AS (
+  SELECT unnest(string_to_array($5::text, ',')::uuid[]) AS observer_id
+),
+eligible AS (
+  SELECT observer_id FROM selected s
+  WHERE $3::text = '' OR EXISTS (
+    SELECT 1 FROM packet_observations po
+    WHERE po.observer_id = s.observer_id
+      AND po.iata = ANY(string_to_array($3::text, ','))
+  )
+),
+obs AS (
+  SELECT
+    po.observer_id,
+    to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
+    COUNT(DISTINCT po.packet_hash)::bigint AS packet_count,
+    COUNT(*)::bigint AS observation_count
+  FROM packet_observations po
+  JOIN eligible e ON e.observer_id = po.observer_id
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.observer_id, bucket
+),
+tel AS (
+  SELECT
+    ot.observer_id,
+    to_timestamp(floor(extract(epoch from ot.reported_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
+    AVG(ot.noise_floor_db)::real AS noise_floor_db,
+    AVG(ot.airtime_tx_pct)::real AS airtime_tx_pct,
+    AVG(ot.airtime_rx_pct)::real AS airtime_rx_pct,
+    MAX(ot.queue_length)::int AS queue_length,
+    SUM(COALESCE(ot.receive_errors, 0))::bigint AS receive_errors,
+    AVG(ot.battery_voltage_mv)::int AS battery_mv
+  FROM observer_telemetry ot
+  JOIN eligible e ON e.observer_id = ot.observer_id
+  WHERE ot.reported_at >= $1
+    AND ot.reported_at <= $2
+  GROUP BY ot.observer_id, bucket
+)
+SELECT
+  COALESCE(obs.bucket, tel.bucket) AS bucket,
+  COALESCE(obs.observer_id, tel.observer_id) AS observer_id,
+  COALESCE(obs.packet_count, 0)::bigint,
+  COALESCE(obs.observation_count, 0)::bigint,
+  tel.noise_floor_db,
+  tel.airtime_tx_pct,
+  tel.airtime_rx_pct,
+  tel.queue_length,
+  COALESCE(tel.receive_errors, 0)::bigint,
+  tel.battery_mv
+FROM obs
+FULL OUTER JOIN tel ON tel.observer_id = obs.observer_id AND tel.bucket = obs.bucket
+ORDER BY bucket ASC, observer_id ASC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket), observerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	points := []api.StatsObserverComparePoint{}
+	for rows.Next() {
+		var point api.StatsObserverComparePoint
+		var bucket time.Time
+		if err := rows.Scan(
+			&bucket,
+			&point.ObserverID,
+			&point.PacketCount,
+			&point.ObservationCount,
+			&point.NoiseFloorDB,
+			&point.AirtimeTxPct,
+			&point.AirtimeRxPct,
+			&point.QueueLength,
+			&point.ReceiveErrors,
+			&point.BatteryMV,
+		); err != nil {
+			return nil, err
+		}
+		point.T = bucket.UnixMilli()
+		points = append(points, point)
+	}
+	return points, rows.Err()
 }
 
 func classifyObserverHealth(item *api.StatsObserverHealth, staleCutoff time.Time) {

@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 // StatsRouter mounts all /stats routes onto a subrouter.
@@ -31,6 +33,7 @@ func StatsRouter(reader api.Reader) http.Handler {
 	r.Get("/payloads", getStatsPayloads(reader))
 	r.Get("/rf-health", getStatsRFHealth(reader))
 	r.Get("/observer-health", getStatsObserverHealth(reader))
+	r.Get("/observer-compare", getStatsObserverCompare(reader))
 	r.Get("/overview", getStatsOverview(reader))
 	r.Get("/observations", getStatsObservations(reader))
 	r.Get("/payload-breakdown", getStatsPayloadBreakdown(reader))
@@ -167,9 +170,43 @@ func parseStatsObserverHealthFilter(r *http.Request, reader api.Reader, fallback
 	return api.StatsObserverHealthFilter{StatsFilter: filter, StaleAfter: staleAfter}, nil
 }
 
+type errStatsObserverCompareIDs struct{}
+
+func (errStatsObserverCompareIDs) Error() string {
+	return "observerIds must include 2 to 6 comma-separated UUIDs"
+}
+
+func parseStatsObserverCompareFilter(r *http.Request, reader api.Reader) (api.StatsObserverCompareFilter, error) {
+	healthFilter, err := parseStatsObserverHealthFilter(r, reader, 6)
+	if err != nil {
+		return api.StatsObserverCompareFilter{}, err
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get("observerIds"))
+	if raw == "" {
+		return api.StatsObserverCompareFilter{}, errStatsObserverCompareIDs{}
+	}
+	seen := map[uuid.UUID]struct{}{}
+	ids := make([]uuid.UUID, 0, 6)
+	for _, part := range strings.Split(raw, ",") {
+		id, err := uuid.Parse(strings.TrimSpace(part))
+		if err != nil {
+			return api.StatsObserverCompareFilter{}, errStatsObserverCompareIDs{}
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) < 2 || len(ids) > 6 {
+		return api.StatsObserverCompareFilter{}, errStatsObserverCompareIDs{}
+	}
+	return api.StatsObserverCompareFilter{StatsObserverHealthFilter: healthFilter, ObserverIDs: ids}, nil
+}
+
 func respondStatsParamError(w http.ResponseWriter, err error) {
 	switch err.(type) {
-	case errStatsSinceAfterUntil, errStatsInvalidBucket:
+	case errStatsSinceAfterUntil, errStatsInvalidBucket, errStatsObserverCompareIDs:
 		respondError(w, http.StatusBadRequest, err.Error())
 	default:
 		respondError(w, http.StatusBadRequest, "invalid stats query parameter")
@@ -339,6 +376,41 @@ func getStatsObserverHealth(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, health)
+	}
+}
+
+// getStatsObserverCompare godoc
+//
+//	@Summary	Stats observer compare
+//	@Tags		Stats
+//	@Produce	json
+//	@Param		observerIds	query	string	true	"Comma-separated observer UUIDs, 2 to 6"
+//	@Param		iatas	query	string	false	"Comma-separated IATA codes"
+//	@Param		regionId	query	int	false	"Filter by region ID, expands to member IATAs"
+//	@Param		region	query	string	false	"Filter by region slug, expands to member IATAs"
+//	@Param		range	query	string	false	"Window preset: 24h, 7d, or 30d"
+//	@Param		since	query	int	false	"Window start as epoch milliseconds"
+//	@Param		until	query	int	false	"Window end as epoch milliseconds"
+//	@Param		bucket	query	string	false	"Bucket size: 1h, 6h, or 24h"
+//	@Param		staleAfterMinutes	query	int	false	"Observer stale threshold in minutes"
+//	@Success	200	{object}	api.StatsObserverCompare
+//	@Failure	400	{object}	handlers.APIError
+//	@Failure	500	{object}	handlers.APIError
+//	@Router		/stats/observer-compare [get]
+func getStatsObserverCompare(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filter, err := parseStatsObserverCompareFilter(r, reader)
+		if err != nil {
+			respondStatsParamError(w, err)
+			return
+		}
+		compare, err := reader.GetStatsObserverCompare(r.Context(), filter)
+		if err != nil {
+			log.Printf("api: GetStatsObserverCompare failed: %v", err)
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, compare)
 	}
 }
 

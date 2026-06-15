@@ -15,34 +15,35 @@ import (
 )
 
 const (
-	keyIATAs                     = "beacon:iatas"
-	keyIATAPrefix                = "beacon:iata:"
-	keyRegions                   = "beacon:regions"
-	keyRegionPrefix              = "beacon:region:"
-	keyRegionSlugPrefix          = "beacon:region:slug:"
-	keyAtlasRegionPrefix         = "beacon:atlas:region:"
-	keyLiveSummaryPrefix         = "beacon:live:summary:"
-	keyScopeNames                = "beacon:scope:names"
-	keyScopeStats                = "beacon:scope:stats"
-	keyScopesByIATAsPrefix       = "beacon:scopes:iatas:"
-	keyScopeByNamePrefix         = "beacon:scope:name:"
-	keyStatsOverviewPrefix       = "beacon:stats:overview:"
-	keyStatsObservationsPrefix   = "beacon:stats:observations:"
-	keyStatsBreakdownPrefix      = "beacon:stats:breakdown:"
-	keyStatsTopNodesPrefix       = "beacon:stats:top-nodes:"
-	keyStatsTopObsPrefix         = "beacon:stats:top-observers:"
-	keyStatsNodeTypes            = "beacon:stats:node-types:"
-	keyStatsSummaryPrefix        = "beacon:stats:summary:"
-	keyStatsRegionsPrefix        = "beacon:stats:regions:"
-	keyStatsPayloadsPrefix       = "beacon:stats:payloads:"
-	keyStatsRFHealthPrefix       = "beacon:stats:rf-health:"
-	keyStatsObserverHealthPrefix = "beacon:stats:observer-health:"
-	keyRadioPresetsPrefix        = "beacon:radio-presets:"
-	keyNodePrefix                = "beacon:node:"
-	keyNodeNeighborsPrefix       = "beacon:node:neighbors:"
-	keyNodesByIDsPrefix          = "beacon:nodes:ids:"
-	keyObserverPrefix            = "beacon:observer:"
-	keyObserverScopesPrefix      = "beacon:observer:scopes:"
+	keyIATAs                      = "beacon:iatas"
+	keyIATAPrefix                 = "beacon:iata:"
+	keyRegions                    = "beacon:regions"
+	keyRegionPrefix               = "beacon:region:"
+	keyRegionSlugPrefix           = "beacon:region:slug:"
+	keyAtlasRegionPrefix          = "beacon:atlas:region:"
+	keyLiveSummaryPrefix          = "beacon:live:summary:"
+	keyScopeNames                 = "beacon:scope:names"
+	keyScopeStats                 = "beacon:scope:stats"
+	keyScopesByIATAsPrefix        = "beacon:scopes:iatas:"
+	keyScopeByNamePrefix          = "beacon:scope:name:"
+	keyStatsOverviewPrefix        = "beacon:stats:overview:"
+	keyStatsObservationsPrefix    = "beacon:stats:observations:"
+	keyStatsBreakdownPrefix       = "beacon:stats:breakdown:"
+	keyStatsTopNodesPrefix        = "beacon:stats:top-nodes:"
+	keyStatsTopObsPrefix          = "beacon:stats:top-observers:"
+	keyStatsNodeTypes             = "beacon:stats:node-types:"
+	keyStatsSummaryPrefix         = "beacon:stats:summary:"
+	keyStatsRegionsPrefix         = "beacon:stats:regions:"
+	keyStatsPayloadsPrefix        = "beacon:stats:payloads:"
+	keyStatsRFHealthPrefix        = "beacon:stats:rf-health:"
+	keyStatsObserverHealthPrefix  = "beacon:stats:observer-health:"
+	keyStatsObserverComparePrefix = "beacon:stats:observer-compare:"
+	keyRadioPresetsPrefix         = "beacon:radio-presets:"
+	keyNodePrefix                 = "beacon:node:"
+	keyNodeNeighborsPrefix        = "beacon:node:neighbors:"
+	keyNodesByIDsPrefix           = "beacon:nodes:ids:"
+	keyObserverPrefix             = "beacon:observer:"
+	keyObserverScopesPrefix       = "beacon:observer:scopes:"
 )
 
 // CachedReader wraps an api.Reader with a Redis caching layer.
@@ -157,6 +158,16 @@ func statsFilterCacheKey(prefix string, filter api.StatsFilter, cacheBucket time
 func statsObserverHealthCacheKey(prefix string, filter api.StatsObserverHealthFilter, cacheBucket time.Duration) string {
 	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
 	return fmt.Sprintf("%s:%d", base, int64(filter.StaleAfter/time.Minute))
+}
+
+func statsObserverCompareCacheKey(prefix string, filter api.StatsObserverCompareFilter, cacheBucket time.Duration) string {
+	base := statsObserverHealthCacheKey(prefix, filter.StatsObserverHealthFilter, cacheBucket)
+	ids := make([]string, 0, len(filter.ObserverIDs))
+	for _, id := range filter.ObserverIDs {
+		ids = append(ids, id.String())
+	}
+	sort.Strings(ids)
+	return fmt.Sprintf("%s:%s", base, strings.Join(ids, ","))
 }
 
 // InvalidateNode removes the cached entries for a node by UUID.
@@ -361,6 +372,14 @@ func (cr *CachedReader) GetStatsObserverHealth(ctx context.Context, filter api.S
 	key := statsObserverHealthCacheKey(keyStatsObserverHealthPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsObserverHealthResponse, error) {
 		return cr.inner.GetStatsObserverHealth(ctx, filter)
+	})
+}
+
+// GetStatsObserverCompare implements [api.Reader].
+func (cr *CachedReader) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
+	key := statsObserverCompareCacheKey(keyStatsObserverComparePrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsObserverCompare, error) {
+		return cr.inner.GetStatsObserverCompare(ctx, filter)
 	})
 }
 

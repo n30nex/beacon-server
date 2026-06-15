@@ -176,6 +176,10 @@ func (stubReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsOb
 	return &api.StatsObserverHealthResponse{}, nil
 }
 
+func (stubReader) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
+	return &api.StatsObserverCompare{}, nil
+}
+
 func (stubReader) GetScopeNames(ctx context.Context) ([]string, error) {
 	return nil, nil
 }

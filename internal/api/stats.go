@@ -95,6 +95,12 @@ type StatsObserverHealthFilter struct {
 	StaleAfter time.Duration
 }
 
+// StatsObserverCompareFilter scopes an observer comparison payload.
+type StatsObserverCompareFilter struct {
+	StatsObserverHealthFilter
+	ObserverIDs []uuid.UUID
+}
+
 // StatsWindow echoes the normalized time window used to build a response.
 type StatsWindow struct {
 	Since  int64  `json:"since"`
@@ -227,6 +233,43 @@ type StatsObserverHealthResponse struct {
 	Window     StatsWindow           `json:"window"`
 	Summary    StatsHealthSummary    `json:"summary"`
 	Items      []StatsObserverHealth `json:"items"`
+}
+
+// StatsObserverCompareItem is a prepared per-observer comparison row.
+type StatsObserverCompareItem struct {
+	StatsObserverHealth
+	PacketCount      int64                  `json:"packetCount"`
+	PayloadMix       []PayloadBreakdownItem `json:"payloadMix"`
+	RouteMix         []LiveRouteMixItem     `json:"routeMix"`
+	AvgNoiseFloorDB  *float32               `json:"avgNoiseFloorDb,omitempty"`
+	AvgAirtimeTxPct  *float32               `json:"avgAirtimeTxPct,omitempty"`
+	AvgAirtimeRxPct  *float32               `json:"avgAirtimeRxPct,omitempty"`
+	AvgBatteryMV     *int32                 `json:"avgBatteryMv,omitempty"`
+	MaxQueueLength   *int32                 `json:"maxQueueLength,omitempty"`
+	ReceiveErrorsSum int64                  `json:"receiveErrorsSum"`
+}
+
+// StatsObserverComparePoint is a bucketed compare point for one observer.
+type StatsObserverComparePoint struct {
+	T                int64     `json:"t"`
+	ObserverID       uuid.UUID `json:"observerId"`
+	PacketCount      int64     `json:"packetCount"`
+	ObservationCount int64     `json:"observationCount"`
+	NoiseFloorDB     *float32  `json:"noiseFloorDb,omitempty"`
+	AirtimeTxPct     *float32  `json:"airtimeTxPct,omitempty"`
+	AirtimeRxPct     *float32  `json:"airtimeRxPct,omitempty"`
+	QueueLength      *int32    `json:"queueLength,omitempty"`
+	ReceiveErrors    int64     `json:"receiveErrors"`
+	BatteryMV        *int32    `json:"batteryMv,omitempty"`
+}
+
+// StatsObserverCompare is the response envelope for /stats/observer-compare.
+type StatsObserverCompare struct {
+	ServerTime  int64                       `json:"serverTime"`
+	Window      StatsWindow                 `json:"window"`
+	SharedIATAs []string                    `json:"sharedIatas"`
+	Items       []StatsObserverCompareItem  `json:"items"`
+	Series      []StatsObserverComparePoint `json:"series"`
 }
 
 // StatsRFHealthIATA summarizes RF health for one IATA.

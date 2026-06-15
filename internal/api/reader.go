@@ -191,6 +191,9 @@ type Reader interface {
 	// GetStatsObserverHealth returns observer-health rows with stale/degraded flags.
 	GetStatsObserverHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsObserverHealthResponse, error)
 
+	// GetStatsObserverCompare returns prepared side-by-side observer analytics.
+	GetStatsObserverCompare(ctx context.Context, filter StatsObserverCompareFilter) (*StatsObserverCompare, error)
+
 	// GetScopeNames returns the names of all configured transport scopes, ordered alphabetically.
 	// Use when no geographic filter is applied — returns names only for a lightweight response.
 	GetScopeNames(ctx context.Context) ([]string, error)

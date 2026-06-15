@@ -115,7 +115,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | Observer status table | Observers tab and broker/status filters | Done | `ObserverTable.tsx`; `/api/v1/observers` | Preserve health/status semantics | Existing | P0 |
 | Observer telemetry charts | Stats Observers tab charts | Done | `ObserverTab.tsx`; `/api/v1/observers/{id}/telemetry` | Expand flags/threshold config | Existing telemetry API | P1 |
 | Per-observer analytics | Stats observers and detail panel | Partial | `ObserverDetailPanel.tsx`; `ObserverTab.tsx` | Add observer-specific packet/payload/route breakdowns | Observer analytics endpoint | P1 |
-| Observer Compare | None | Missing | No compare page found | Add multi-select compare route under Stats/Observers | Aggregated observer compare API | P0 |
+| Observer Compare | Stats/Observers compare mode with prepared compare API | Partial | `/api/v1/stats/observer-compare`; `ObserverTab.tsx` | First pass supports 2-6 selected observers, shared IATAs, health/activity/RF comparison; URL state and richer charts still needed | URL serialization + chart polish | P0 |
 | Clock health/skew | RF health has telemetry flags | Missing | `RFHealthTab.tsx` | Add node/observer clock skew endpoints/charts if data supports it | Clock-skew query logic | P2 |
 | Configurable observer thresholds | Static health classification | Partial | `stats/transforms.ts`; server stats health | Move thresholds to config and health endpoint metadata | Server config + frontend labels | P2 |
 
