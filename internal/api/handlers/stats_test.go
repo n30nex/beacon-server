@@ -32,6 +32,11 @@ type statsTopologyReader struct {
 	filter api.StatsFilter
 }
 
+type statsSubpathsReader struct {
+	stubReader
+	filter api.StatsFilter
+}
+
 type statsChannelsReader struct {
 	stubReader
 	filter api.StatsFilter
@@ -69,6 +74,18 @@ func (r *statsTopologyReader) GetStatsTopology(ctx context.Context, filter api.S
 		RouteCount:       3,
 		ObservationCount: 9,
 		ActiveIATAs:      2,
+	}, nil
+}
+
+func (r *statsSubpathsReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
+	r.filter = filter
+	return &api.StatsSubpaths{
+		ServerTime:         123,
+		Window:             api.StatsWindow{Since: filter.Since.UnixMilli(), Until: filter.Until.UnixMilli(), Bucket: filter.Bucket},
+		RouteCount:         5,
+		SubpathCount:       22,
+		UniqueSubpathCount: 9,
+		ObservationCount:   44,
 	}, nil
 }
 
@@ -245,6 +262,45 @@ func TestGetStatsTopology_FilterContract(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body.RouteCount != 3 || body.ActiveIATAs != 2 {
+		t.Fatalf("unexpected response %#v", body)
+	}
+}
+
+func TestGetStatsSubpaths_InvalidBucket(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/subpaths", getStatsSubpaths(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/subpaths?bucket=15m", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsSubpaths_FilterContract(t *testing.T) {
+	reader := &statsSubpathsReader{}
+	r := chi.NewRouter()
+	r.Get("/stats/subpaths", getStatsSubpaths(reader))
+	req := httptest.NewRequest(http.MethodGet, "/stats/subpaths?since=1000&until=5000&bucket=1h&iatas=yvr,YOW&limit=12", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !reader.filter.Since.Equal(time.UnixMilli(1000)) || !reader.filter.Until.Equal(time.UnixMilli(5000)) {
+		t.Fatalf("unexpected window %#v", reader.filter)
+	}
+	if reader.filter.Bucket != "1h" || reader.filter.Limit != 12 {
+		t.Fatalf("unexpected bucket/limit %#v", reader.filter)
+	}
+	if got := strings.Join(reader.filter.IATAs, ","); got != "YVR,YOW" {
+		t.Fatalf("unexpected iatas %q", got)
+	}
+	var body api.StatsSubpaths
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.RouteCount != 5 || body.UniqueSubpathCount != 9 {
 		t.Fatalf("unexpected response %#v", body)
 	}
 }

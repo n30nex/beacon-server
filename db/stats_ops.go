@@ -20,6 +20,7 @@ const (
 	statsDefaultBucket     = "1h"
 	statsDefaultLimit      = int32(25)
 	statsDefaultStaleAfter = 30 * time.Minute
+	statsMaxSubpathNodes   = int32(6)
 )
 
 func normalizeStatsFilter(filter api.StatsFilter) api.StatsFilter {
@@ -1035,6 +1036,273 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
+	filter = normalizeStatsFilter(filter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	response := &api.StatsSubpaths{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter),
+	}
+
+	if err := s.pool.QueryRow(ctx, `
+WITH routes AS (
+  SELECT id, iata, node_ids, observation_count, last_seen
+  FROM known_routes
+  WHERE last_seen >= $1
+    AND last_seen <= $2
+    AND array_length(node_ids, 1) >= 2
+    AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))
+),
+subpaths AS (
+  SELECT
+    r.id,
+    r.node_ids[start_ord:end_ord] AS node_ids,
+    (end_ord - start_ord + 1)::int AS node_count,
+    r.observation_count
+  FROM routes r
+  CROSS JOIN LATERAL generate_subscripts(r.node_ids, 1) AS s(start_ord)
+  CROSS JOIN LATERAL generate_subscripts(r.node_ids, 1) AS e(end_ord)
+  WHERE end_ord > start_ord
+    AND (end_ord - start_ord + 1) <= $4
+)
+SELECT
+  (SELECT COUNT(*)::bigint FROM routes),
+  COUNT(*)::bigint,
+  COUNT(DISTINCT subpaths.node_ids::text)::bigint,
+  COALESCE(SUM(subpaths.observation_count), 0)::bigint,
+  COALESCE(AVG(subpaths.node_count), 0)::float8
+FROM subpaths`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes).Scan(
+		&response.RouteCount,
+		&response.SubpathCount,
+		&response.UniqueSubpathCount,
+		&response.ObservationCount,
+		&response.AverageNodeCount,
+	); err != nil {
+		return nil, err
+	}
+
+	lengths, err := s.getStatsSubpathLengthBuckets(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.LengthBuckets = lengths
+
+	subpaths, err := s.getStatsTopSubpaths(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopSubpaths = subpaths
+
+	endpoints, err := s.getStatsSubpathEndpointPairs(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopEndpointPairs = endpoints
+
+	timeline, err := s.getStatsSubpathTimeline(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.Timeline = timeline
+	return response, nil
+}
+
+func statsSubpathSQLBase() string {
+	return `
+WITH routes AS (
+  SELECT id, iata, node_ids, observation_count, first_seen, last_seen
+  FROM known_routes
+  WHERE last_seen >= $1
+    AND last_seen <= $2
+    AND array_length(node_ids, 1) >= 2
+    AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))
+),
+subpaths AS (
+  SELECT
+    r.id,
+    r.iata,
+    r.node_ids[start_ord:end_ord] AS node_ids,
+    (end_ord - start_ord + 1)::int AS node_count,
+    r.observation_count,
+    r.first_seen,
+    r.last_seen
+  FROM routes r
+  CROSS JOIN LATERAL generate_subscripts(r.node_ids, 1) AS s(start_ord)
+  CROSS JOIN LATERAL generate_subscripts(r.node_ids, 1) AS e(end_ord)
+  WHERE end_ord > start_ord
+    AND (end_ord - start_ord + 1) <= $4
+)`
+}
+
+func (s *Store) getStatsSubpathLengthBuckets(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsSubpathLengthBucket, error) {
+	rows, err := s.pool.Query(ctx, statsSubpathSQLBase()+`
+SELECT
+  node_count,
+  COUNT(DISTINCT id)::bigint,
+  COUNT(*)::bigint,
+  COALESCE(SUM(observation_count), 0)::bigint
+FROM subpaths
+GROUP BY node_count
+ORDER BY node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsSubpathLengthBucket{}
+	for rows.Next() {
+		var item api.StatsSubpathLengthBucket
+		if err := rows.Scan(&item.NodeCount, &item.RouteCount, &item.SubpathCount, &item.ObservationCount); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsTopSubpaths(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsSubpathRow, error) {
+	rows, err := s.pool.Query(ctx, statsSubpathSQLBase()+`
+, grouped AS (
+  SELECT
+    node_ids,
+    MAX(node_count)::int AS node_count,
+    array_agg(DISTINCT iata ORDER BY iata) AS iatas,
+    COUNT(DISTINCT id)::bigint AS route_count,
+    COALESCE(SUM(observation_count), 0)::bigint AS observation_count,
+    MIN(first_seen) AS first_seen,
+    MAX(last_seen) AS last_seen
+  FROM subpaths
+  GROUP BY node_ids
+)
+SELECT
+  g.node_count,
+  g.node_ids,
+  COALESCE(names.node_names, ARRAY[]::text[]),
+  g.iatas,
+  g.route_count,
+  g.observation_count,
+  g.first_seen,
+  g.last_seen
+FROM grouped g
+LEFT JOIN LATERAL (
+  SELECT array_agg(COALESCE(n.name, encode(n.public_key, 'hex')) ORDER BY u.ord) AS node_names
+  FROM unnest(g.node_ids) WITH ORDINALITY AS u(node_id, ord)
+  JOIN nodes n ON n.id = u.node_id
+) names ON true
+ORDER BY g.observation_count DESC, g.route_count DESC, g.last_seen DESC
+LIMIT $5`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsSubpathRow{}
+	for rows.Next() {
+		var item api.StatsSubpathRow
+		var firstSeen, lastSeen time.Time
+		if err := rows.Scan(
+			&item.NodeCount,
+			&item.NodeIDs,
+			&item.NodeNames,
+			&item.IATAs,
+			&item.RouteCount,
+			&item.ObservationCount,
+			&firstSeen,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		item.FirstSeen = firstSeen.UnixMilli()
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsSubpathEndpointPairs(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsSubpathEndpointPair, error) {
+	rows, err := s.pool.Query(ctx, statsSubpathSQLBase()+`
+, endpoints AS (
+  SELECT
+    node_ids[1] AS from_node_id,
+    node_ids[node_count] AS to_node_id,
+    iata,
+    id,
+    node_count,
+    observation_count,
+    last_seen
+  FROM subpaths
+)
+SELECT
+  e.from_node_id,
+  nf.name,
+  e.to_node_id,
+  nt.name,
+  array_agg(DISTINCT e.iata ORDER BY e.iata),
+  MIN(e.node_count)::int,
+  MAX(e.node_count)::int,
+  COUNT(DISTINCT e.id)::bigint,
+  COALESCE(SUM(e.observation_count), 0)::bigint,
+  MAX(e.last_seen)
+FROM endpoints e
+JOIN nodes nf ON nf.id = e.from_node_id
+JOIN nodes nt ON nt.id = e.to_node_id
+GROUP BY e.from_node_id, nf.name, e.to_node_id, nt.name
+ORDER BY COALESCE(SUM(e.observation_count), 0) DESC, COUNT(DISTINCT e.id) DESC, MAX(e.last_seen) DESC
+LIMIT $5`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsSubpathEndpointPair{}
+	for rows.Next() {
+		var item api.StatsSubpathEndpointPair
+		var lastSeen time.Time
+		if err := rows.Scan(
+			&item.FromNodeID,
+			&item.FromNodeName,
+			&item.ToNodeID,
+			&item.ToNodeName,
+			&item.IATAs,
+			&item.MinNodeCount,
+			&item.MaxNodeCount,
+			&item.RouteCount,
+			&item.ObservationCount,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsSubpathTimeline(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsSubpathTimelinePoint, error) {
+	rows, err := s.pool.Query(ctx, statsSubpathSQLBase()+`
+SELECT
+  to_timestamp(floor(extract(epoch from last_seen) / ($5::double precision * 3600)) * ($5::double precision * 3600)) AS bucket,
+  node_count,
+  COUNT(DISTINCT id)::bigint,
+  COUNT(*)::bigint,
+  COALESCE(SUM(observation_count), 0)::bigint
+FROM subpaths
+GROUP BY bucket, node_count
+ORDER BY bucket ASC, node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, bucketHours(filter.Bucket))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	points := []api.StatsSubpathTimelinePoint{}
+	for rows.Next() {
+		var point api.StatsSubpathTimelinePoint
+		var bucket time.Time
+		if err := rows.Scan(&bucket, &point.NodeCount, &point.RouteCount, &point.SubpathCount, &point.ObservationCount); err != nil {
+			return nil, err
+		}
+		point.T = bucket.UnixMilli()
+		points = append(points, point)
+	}
+	return points, rows.Err()
 }
 
 func (s *Store) GetStatsChannels(ctx context.Context, filter api.StatsFilter) (*api.StatsChannels, error) {

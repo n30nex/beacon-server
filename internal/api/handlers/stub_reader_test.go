@@ -176,6 +176,10 @@ func (stubReader) GetStatsTopology(ctx context.Context, filter api.StatsFilter) 
 	return &api.StatsTopology{}, nil
 }
 
+func (stubReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
+	return &api.StatsSubpaths{}, nil
+}
+
 func (stubReader) GetStatsChannels(ctx context.Context, filter api.StatsFilter) (*api.StatsChannels, error) {
 	return &api.StatsChannels{}, nil
 }

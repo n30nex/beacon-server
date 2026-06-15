@@ -37,6 +37,7 @@ const (
 	keyStatsPayloadsPrefix        = "beacon:stats:payloads:"
 	keyStatsHashPrefix            = "beacon:stats:hash:"
 	keyStatsTopologyPrefix        = "beacon:stats:topology:"
+	keyStatsSubpathsPrefix        = "beacon:stats:subpaths:"
 	keyStatsChannelsPrefix        = "beacon:stats:channels:"
 	keyStatsRFHealthPrefix        = "beacon:stats:rf-health:"
 	keyStatsObserverHealthPrefix  = "beacon:stats:observer-health:"
@@ -375,6 +376,14 @@ func (cr *CachedReader) GetStatsTopology(ctx context.Context, filter api.StatsFi
 	key := statsFilterCacheKey(keyStatsTopologyPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsTopology, error) {
 		return cr.inner.GetStatsTopology(ctx, filter)
+	})
+}
+
+// GetStatsSubpaths implements [api.Reader].
+func (cr *CachedReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
+	key := statsFilterCacheKey(keyStatsSubpathsPrefix, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsSubpaths, error) {
+		return cr.inner.GetStatsSubpaths(ctx, filter)
 	})
 }
 

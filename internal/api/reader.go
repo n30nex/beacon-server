@@ -191,6 +191,9 @@ type Reader interface {
 	// GetStatsTopology returns verified-route topology aggregates.
 	GetStatsTopology(ctx context.Context, filter StatsFilter) (*StatsTopology, error)
 
+	// GetStatsSubpaths returns verified route-pattern and subpath aggregates.
+	GetStatsSubpaths(ctx context.Context, filter StatsFilter) (*StatsSubpaths, error)
+
 	// GetStatsChannels returns channel activity, key-state mix, timeline, top senders, and IATA distribution.
 	GetStatsChannels(ctx context.Context, filter StatsFilter) (*StatsChannels, error)
 

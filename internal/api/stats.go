@@ -306,6 +306,68 @@ type StatsTopology struct {
 	BestPaths        []StatsTopologyPath      `json:"bestPaths"`
 }
 
+// StatsSubpathLengthBucket summarizes repeated verified route segments by
+// segment length. NodeCount is the number of nodes in the segment; hop count is
+// NodeCount - 1.
+type StatsSubpathLengthBucket struct {
+	NodeCount        int32 `json:"nodeCount"`
+	RouteCount       int64 `json:"routeCount"`
+	SubpathCount     int64 `json:"subpathCount"`
+	ObservationCount int64 `json:"observationCount"`
+}
+
+// StatsSubpathRow ranks repeated contiguous segments found inside verified
+// known routes.
+type StatsSubpathRow struct {
+	NodeCount        int32       `json:"nodeCount"`
+	NodeIDs          []uuid.UUID `json:"nodeIds"`
+	NodeNames        []string    `json:"nodeNames"`
+	IATAs            []string    `json:"iatas"`
+	RouteCount       int64       `json:"routeCount"`
+	ObservationCount int64       `json:"observationCount"`
+	FirstSeen        int64       `json:"firstSeen"`
+	LastSeen         int64       `json:"lastSeen"`
+}
+
+// StatsSubpathEndpointPair ranks source/destination pairs across verified
+// known routes, regardless of the intermediate route segment.
+type StatsSubpathEndpointPair struct {
+	FromNodeID       uuid.UUID `json:"fromNodeId"`
+	FromNodeName     *string   `json:"fromNodeName,omitempty"`
+	ToNodeID         uuid.UUID `json:"toNodeId"`
+	ToNodeName       *string   `json:"toNodeName,omitempty"`
+	IATAs            []string  `json:"iatas"`
+	MinNodeCount     int32     `json:"minNodeCount"`
+	MaxNodeCount     int32     `json:"maxNodeCount"`
+	RouteCount       int64     `json:"routeCount"`
+	ObservationCount int64     `json:"observationCount"`
+	LastSeen         int64     `json:"lastSeen"`
+}
+
+// StatsSubpathTimelinePoint is a bucketed count of verified route segments.
+type StatsSubpathTimelinePoint struct {
+	T                int64 `json:"t"`
+	NodeCount        int32 `json:"nodeCount"`
+	RouteCount       int64 `json:"routeCount"`
+	SubpathCount     int64 `json:"subpathCount"`
+	ObservationCount int64 `json:"observationCount"`
+}
+
+// StatsSubpaths is the response envelope for /stats/subpaths.
+type StatsSubpaths struct {
+	ServerTime         int64                       `json:"serverTime"`
+	Window             StatsWindow                 `json:"window"`
+	RouteCount         int64                       `json:"routeCount"`
+	SubpathCount       int64                       `json:"subpathCount"`
+	UniqueSubpathCount int64                       `json:"uniqueSubpathCount"`
+	ObservationCount   int64                       `json:"observationCount"`
+	AverageNodeCount   float64                     `json:"averageNodeCount"`
+	LengthBuckets      []StatsSubpathLengthBucket  `json:"lengthBuckets"`
+	TopSubpaths        []StatsSubpathRow           `json:"topSubpaths"`
+	TopEndpointPairs   []StatsSubpathEndpointPair  `json:"topEndpointPairs"`
+	Timeline           []StatsSubpathTimelinePoint `json:"timeline"`
+}
+
 // StatsChannelKeyBucket summarizes channel activity by key visibility.
 type StatsChannelKeyBucket struct {
 	KeyState         string `json:"keyState"` // public, hashtag, known, or unknown

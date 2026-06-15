@@ -141,7 +141,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | Hash stats | Stats Hash tab with size mix, multibyte share, timeline, and inconsistent packet samples | Partial | `/api/v1/stats/hash`; `src/features/stats/HashTab.tsx` | First pass covers path-hash size analytics; prefix lookup tool still needed | Hash prefix API polish | P1 |
 | Hash collision matrix | Risky-prefix analytics in Stats Hash | Partial | `/api/v1/stats/hash`; `HashTab.tsx` | First pass lists short-prefix collision risks; matrix/prefix drilldown still needed | Prefix lookup and chart polish | P0 |
 | Distance analytics | None | Missing | No distance analytics found | Add optional distance tab if coordinates are reliable | Geo distance query | P3 |
-| Subpath analytics | Traces/Routes only | Partial | `TraceList.tsx`; `Routes` | Add route/subpath analytics under Stats | Subpath aggregate API | P1 |
+| Subpath analytics | Stats Paths tab with verified-route subpath and endpoint-pair analytics | Partial | `/api/v1/stats/subpaths`; `src/features/stats/PathsTab.tsx` | First pass ranks repeated verified subpaths, endpoint pressure, length buckets, and timelines; route-specific drilldowns remain to add | Route detail drill links + chart polish | P1 |
 | Scopes analytics | Stats Scopes tab | Done | `ScopesTab.tsx`; `/api/v1/stats/scopes` | Expand with channel/radio context | Existing | P1 |
 | RF/clock health | RF health present; clock missing | Partial | `RFHealthTab.tsx` | Add clock skew and threshold config | Clock data model | P2 |
 
