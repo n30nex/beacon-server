@@ -822,6 +822,220 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 	return items, rows.Err()
 }
 
+func (s *Store) GetStatsTopology(ctx context.Context, filter api.StatsFilter) (*api.StatsTopology, error) {
+	filter = normalizeStatsFilter(filter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	response := &api.StatsTopology{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter),
+	}
+
+	if err := s.pool.QueryRow(ctx, `
+SELECT
+  COUNT(*)::bigint,
+  COALESCE(SUM(observation_count), 0)::bigint,
+  COUNT(DISTINCT iata)::bigint,
+  COALESCE(AVG(hop_count), 0)::float8
+FROM known_routes
+WHERE last_seen >= $1
+  AND last_seen <= $2
+  AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))`,
+		filter.Since, filter.Until, iataFilter).Scan(
+		&response.RouteCount,
+		&response.ObservationCount,
+		&response.ActiveIATAs,
+		&response.AverageHopCount,
+	); err != nil {
+		return nil, err
+	}
+
+	hops, err := s.getStatsTopologyHopBuckets(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.HopBuckets = hops
+
+	repeaters, err := s.getStatsTopologyRepeaters(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopRepeaters = repeaters
+
+	pairs, err := s.getStatsTopologyPairs(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopPairs = pairs
+
+	paths, err := s.getStatsTopologyBestPaths(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.BestPaths = paths
+	return response, nil
+}
+
+func (s *Store) getStatsTopologyHopBuckets(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsTopologyHopBucket, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT hop_count, COUNT(*)::bigint, COALESCE(SUM(observation_count), 0)::bigint
+FROM known_routes
+WHERE last_seen >= $1
+  AND last_seen <= $2
+  AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))
+GROUP BY hop_count
+ORDER BY hop_count ASC`, filter.Since, filter.Until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsTopologyHopBucket{}
+	for rows.Next() {
+		var item api.StatsTopologyHopBucket
+		if err := rows.Scan(&item.HopCount, &item.RouteCount, &item.ObservationCount); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsTopologyRepeaters(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsTopologyRepeater, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH route_nodes AS (
+  SELECT kr.id, kr.iata, kr.observation_count, kr.last_seen, node_id
+  FROM known_routes kr
+  CROSS JOIN LATERAL unnest(kr.node_ids) AS u(node_id)
+  WHERE kr.last_seen >= $1
+    AND kr.last_seen <= $2
+    AND ($3::text = '' OR kr.iata = ANY(string_to_array($3::text, ',')))
+)
+SELECT
+  rn.node_id,
+  n.name,
+  n.node_type,
+  array_agg(DISTINCT rn.iata ORDER BY rn.iata),
+  COUNT(DISTINCT rn.id)::bigint,
+  COALESCE(SUM(rn.observation_count), 0)::bigint,
+  MAX(rn.last_seen)
+FROM route_nodes rn
+JOIN nodes n ON n.id = rn.node_id
+GROUP BY rn.node_id, n.name, n.node_type
+ORDER BY COALESCE(SUM(rn.observation_count), 0) DESC, COUNT(DISTINCT rn.id) DESC, MAX(rn.last_seen) DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsTopologyRepeater{}
+	for rows.Next() {
+		var item api.StatsTopologyRepeater
+		var lastSeen time.Time
+		if err := rows.Scan(&item.NodeID, &item.NodeName, &item.NodeType, &item.IATAs, &item.RouteCount, &item.ObservationCount, &lastSeen); err != nil {
+			return nil, err
+		}
+		item.NodeTypeName = api.NodeTypeName(item.NodeType)
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsTopologyPairs(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsTopologyPair, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH route_nodes AS (
+  SELECT kr.id, kr.iata, kr.observation_count, kr.last_seen, u.node_id, u.ord
+  FROM known_routes kr
+  CROSS JOIN LATERAL unnest(kr.node_ids) WITH ORDINALITY AS u(node_id, ord)
+  WHERE kr.last_seen >= $1
+    AND kr.last_seen <= $2
+    AND ($3::text = '' OR kr.iata = ANY(string_to_array($3::text, ',')))
+),
+pairs AS (
+  SELECT a.node_id AS from_node_id, b.node_id AS to_node_id, a.iata, a.id, a.observation_count, a.last_seen
+  FROM route_nodes a
+  JOIN route_nodes b ON b.id = a.id AND b.ord = a.ord + 1
+)
+SELECT
+  p.from_node_id,
+  nf.name,
+  p.to_node_id,
+  nt.name,
+  p.iata,
+  COUNT(DISTINCT p.id)::bigint,
+  COALESCE(SUM(p.observation_count), 0)::bigint,
+  MAX(p.last_seen)
+FROM pairs p
+JOIN nodes nf ON nf.id = p.from_node_id
+JOIN nodes nt ON nt.id = p.to_node_id
+GROUP BY p.from_node_id, nf.name, p.to_node_id, nt.name, p.iata
+ORDER BY COALESCE(SUM(p.observation_count), 0) DESC, COUNT(DISTINCT p.id) DESC, MAX(p.last_seen) DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsTopologyPair{}
+	for rows.Next() {
+		var item api.StatsTopologyPair
+		var lastSeen time.Time
+		if err := rows.Scan(&item.FromNodeID, &item.FromNodeName, &item.ToNodeID, &item.ToNodeName, &item.IATA, &item.RouteCount, &item.ObservationCount, &lastSeen); err != nil {
+			return nil, err
+		}
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsTopologyBestPaths(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsTopologyPath, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT
+  kr.id,
+  kr.iata,
+  kr.hop_count,
+  kr.node_ids,
+  COALESCE(names.node_names, ARRAY[]::text[]),
+  kr.observation_count,
+  kr.first_seen,
+  kr.last_seen
+FROM known_routes kr
+LEFT JOIN LATERAL (
+  SELECT array_agg(COALESCE(n.name, encode(n.public_key, 'hex')) ORDER BY u.ord) AS node_names
+  FROM unnest(kr.node_ids) WITH ORDINALITY AS u(node_id, ord)
+  JOIN nodes n ON n.id = u.node_id
+) names ON true
+WHERE kr.last_seen >= $1
+  AND kr.last_seen <= $2
+  AND ($3::text = '' OR kr.iata = ANY(string_to_array($3::text, ',')))
+ORDER BY kr.observation_count DESC, kr.last_seen DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsTopologyPath{}
+	for rows.Next() {
+		var item api.StatsTopologyPath
+		var firstSeen, lastSeen time.Time
+		if err := rows.Scan(
+			&item.RouteID,
+			&item.IATA,
+			&item.HopCount,
+			&item.NodeIDs,
+			&item.NodeNames,
+			&item.ObservationCount,
+			&firstSeen,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		item.FirstSeen = firstSeen.UnixMilli()
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
 	filter = normalizeObserverHealthFilter(filter)
 	iataFilter := statsIATAFilter(filter.IATAs)

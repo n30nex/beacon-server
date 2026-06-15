@@ -188,6 +188,9 @@ type Reader interface {
 	// GetStatsHashAnalytics returns CoreScope-style path-hash distribution and collision-risk analytics.
 	GetStatsHashAnalytics(ctx context.Context, filter StatsFilter) (*StatsHashAnalytics, error)
 
+	// GetStatsTopology returns verified-route topology aggregates.
+	GetStatsTopology(ctx context.Context, filter StatsFilter) (*StatsTopology, error)
+
 	// GetStatsRFHealth returns RF-health aggregates, telemetry series, and top offenders.
 	GetStatsRFHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsRFHealth, error)
 

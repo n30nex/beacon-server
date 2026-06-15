@@ -136,7 +136,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | --- | --- | --- | --- | --- | --- | --- |
 | Network overview | Stats Overview + Atlas summary | Beacon Superset | `StatsOverview.tsx`; `AtlasView.tsx` | Beacon regional Atlas exceeds CoreScope overview direction | Existing | P0 |
 | RF analytics | Stats RF Health | Partial | `RFHealthTab.tsx`; `/api/v1/stats/rf-health` | Add richer SNR/RSSI scatter/distribution if raw metrics support it | RF aggregate endpoint | P1 |
-| Topology analytics | Routes/neighborhood only | Missing | `Routes`; `useRouteOverlays.ts` | Add topology tab/section: top repeaters, pairs, hops vs SNR, best paths | Topology aggregate endpoint | P0 |
+| Topology analytics | Stats Topology tab with verified-route repeaters, adjacent pairs, hop distribution, and best paths | Partial | `/api/v1/stats/topology`; `src/features/stats/TopologyTab.tsx` | First pass is verified-route-only; hops-vs-signal and reach rings still needed | RF join and chart polish | P0 |
 | Channel analytics | Payloads/Scopes only | Partial | `PayloadsTab.tsx`; `ScopesTab.tsx` | Add channel timelines and top senders | Channel aggregate endpoint | P1 |
 | Hash stats | Stats Hash tab with size mix, multibyte share, timeline, and inconsistent packet samples | Partial | `/api/v1/stats/hash`; `src/features/stats/HashTab.tsx` | First pass covers path-hash size analytics; prefix lookup tool still needed | Hash prefix API polish | P1 |
 | Hash collision matrix | Risky-prefix analytics in Stats Hash | Partial | `/api/v1/stats/hash`; `HashTab.tsx` | First pass lists short-prefix collision risks; matrix/prefix drilldown still needed | Prefix lookup and chart polish | P0 |

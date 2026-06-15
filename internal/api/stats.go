@@ -249,6 +249,63 @@ type StatsHashAnalytics struct {
 	InconsistentPacketSamples []StatsHashInconsistentPacket `json:"inconsistentPacketSamples"`
 }
 
+// StatsTopologyRepeater ranks nodes by their appearance in verified known routes.
+type StatsTopologyRepeater struct {
+	NodeID           uuid.UUID `json:"nodeId"`
+	NodeName         *string   `json:"nodeName,omitempty"`
+	NodeType         int16     `json:"nodeType"`
+	NodeTypeName     string    `json:"nodeTypeName"`
+	IATAs            []string  `json:"iatas"`
+	RouteCount       int64     `json:"routeCount"`
+	ObservationCount int64     `json:"observationCount"`
+	LastSeen         int64     `json:"lastSeen"`
+}
+
+// StatsTopologyPair ranks adjacent node pairs from verified known routes.
+type StatsTopologyPair struct {
+	FromNodeID       uuid.UUID `json:"fromNodeId"`
+	FromNodeName     *string   `json:"fromNodeName,omitempty"`
+	ToNodeID         uuid.UUID `json:"toNodeId"`
+	ToNodeName       *string   `json:"toNodeName,omitempty"`
+	IATA             string    `json:"iata"`
+	RouteCount       int64     `json:"routeCount"`
+	ObservationCount int64     `json:"observationCount"`
+	LastSeen         int64     `json:"lastSeen"`
+}
+
+// StatsTopologyHopBucket summarizes route counts by hop count.
+type StatsTopologyHopBucket struct {
+	HopCount         int32 `json:"hopCount"`
+	RouteCount       int64 `json:"routeCount"`
+	ObservationCount int64 `json:"observationCount"`
+}
+
+// StatsTopologyPath is a high-confidence known route ranked for operator inspection.
+type StatsTopologyPath struct {
+	RouteID          int64       `json:"routeId"`
+	IATA             string      `json:"iata"`
+	HopCount         int32       `json:"hopCount"`
+	NodeIDs          []uuid.UUID `json:"nodeIds"`
+	NodeNames        []string    `json:"nodeNames"`
+	ObservationCount int64       `json:"observationCount"`
+	FirstSeen        int64       `json:"firstSeen"`
+	LastSeen         int64       `json:"lastSeen"`
+}
+
+// StatsTopology is the response envelope for /stats/topology.
+type StatsTopology struct {
+	ServerTime       int64                    `json:"serverTime"`
+	Window           StatsWindow              `json:"window"`
+	RouteCount       int64                    `json:"routeCount"`
+	ObservationCount int64                    `json:"observationCount"`
+	ActiveIATAs      int64                    `json:"activeIatas"`
+	AverageHopCount  float64                  `json:"averageHopCount"`
+	HopBuckets       []StatsTopologyHopBucket `json:"hopBuckets"`
+	TopRepeaters     []StatsTopologyRepeater  `json:"topRepeaters"`
+	TopPairs         []StatsTopologyPair      `json:"topPairs"`
+	BestPaths        []StatsTopologyPath      `json:"bestPaths"`
+}
+
 // StatsObserverHealthFlags exposes the operator-health classification for one observer.
 type StatsObserverHealthFlags struct {
 	Stale         bool `json:"stale"`
