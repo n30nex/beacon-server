@@ -100,6 +100,10 @@ func (stubReader) ListNodeObservations(ctx context.Context, nodeID uuid.UUID, cu
 	return api.Page[api.PacketObservationSummary]{}, nil
 }
 
+func (stubReader) GetNodeAnalytics(ctx context.Context, nodeID uuid.UUID, filter api.NodeAnalyticsFilter) (*api.NodeAnalytics, error) {
+	return &api.NodeAnalytics{}, nil
+}
+
 func (stubReader) ListPackets(ctx context.Context, payloadType, routeType int16, iatas []string, scope string, since, until time.Time, cursor int64, limit int32) (api.Page[api.PacketSummary], error) {
 	return api.Page[api.PacketSummary]{}, nil
 }

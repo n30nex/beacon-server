@@ -5,6 +5,7 @@ package api
 
 import (
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/meshcore-go/meshcore-go"
@@ -61,6 +62,74 @@ type Node struct {
 	LastSeen                int64          `json:"lastSeen"`                     // epoch ms
 	Metadata                any            `json:"metadata,omitempty"`           // raw JSONB metadata
 	Neighbors               []NodeNeighbor `json:"neighbors"`
+}
+
+// NodeAnalyticsFilter scopes node analytics to a time window and optional IATA set.
+type NodeAnalyticsFilter struct {
+	Since time.Time
+	Until time.Time
+	IATAs []string
+}
+
+// NodeAnalyticsKPI is the compact top-line activity summary for a node.
+type NodeAnalyticsKPI struct {
+	PacketCount      int64    `json:"packetCount"`
+	ObservationCount int64    `json:"observationCount"`
+	ActiveObservers  int64    `json:"activeObservers"`
+	ActiveIATAs      int64    `json:"activeIatas"`
+	FirstHeardAt     *int64   `json:"firstHeardAt,omitempty"`
+	LastHeardAt      *int64   `json:"lastHeardAt,omitempty"`
+	AvgSNR           *float64 `json:"avgSnr,omitempty"`
+	AvgRSSI          *float64 `json:"avgRssi,omitempty"`
+	AvgHopCount      *float64 `json:"avgHopCount,omitempty"`
+}
+
+// NodeAnalyticsCount is a labeled aggregate bucket.
+type NodeAnalyticsCount struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// NodeActivityPoint is an hourly node activity bucket.
+type NodeActivityPoint struct {
+	Timestamp    int64 `json:"timestamp"`
+	Packets      int64 `json:"packets"`
+	Observations int64 `json:"observations"`
+}
+
+// NodeSignalBucket is a small distribution bucket for SNR/RSSI/hops.
+type NodeSignalBucket struct {
+	Bucket string `json:"bucket"`
+	Count  int64  `json:"count"`
+}
+
+// NodeAnalyticsPeer is a neighboring node ranked for analytics.
+type NodeAnalyticsPeer struct {
+	ID               uuid.UUID `json:"id"`
+	Name             *string   `json:"name,omitempty"`
+	PublicKey        string    `json:"publicKey"`
+	NodeTypeName     string    `json:"nodeTypeName"`
+	IATA             string    `json:"iata"`
+	ObservationCount int64     `json:"observationCount"`
+	LastSeen         int64     `json:"lastSeen"`
+}
+
+// NodeAnalytics is the Beacon-native CoreScope parity payload for per-node analytics.
+type NodeAnalytics struct {
+	NodeID       uuid.UUID            `json:"nodeId"`
+	Since        int64                `json:"since"`
+	Until        int64                `json:"until"`
+	KPIs         NodeAnalyticsKPI     `json:"kpis"`
+	PayloadMix   []NodeAnalyticsCount `json:"payloadMix"`
+	RouteMix     []NodeAnalyticsCount `json:"routeMix"`
+	IATAMix      []NodeAnalyticsCount `json:"iataMix"`
+	Hourly       []NodeActivityPoint  `json:"hourly"`
+	SNRBuckets   []NodeSignalBucket   `json:"snrBuckets"`
+	RSSIBuckets  []NodeSignalBucket   `json:"rssiBuckets"`
+	HopBuckets   []NodeSignalBucket   `json:"hopBuckets"`
+	TopObservers []NodeAnalyticsCount `json:"topObservers"`
+	TopPeers     []NodeAnalyticsPeer  `json:"topPeers"`
 }
 
 // NodeTypeName returns a human-readable name for a node type integer.

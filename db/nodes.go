@@ -209,6 +209,313 @@ func (s *Store) GetNodesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UU
 	return result, nil
 }
 
+func (s *Store) GetNodeAnalytics(ctx context.Context, nodeID uuid.UUID, filter api.NodeAnalyticsFilter) (*api.NodeAnalytics, error) {
+	since, until, iataFilter := normalizeNodeAnalyticsFilter(filter)
+	out := &api.NodeAnalytics{
+		NodeID: nodeID,
+		Since:  since.UnixMilli(),
+		Until:  until.UnixMilli(),
+	}
+
+	var firstSeen, lastSeen pgtype.Timestamptz
+	var avgSNR, avgRSSI, avgHop pgtype.Float8
+	err := s.pool.QueryRow(ctx, `
+WITH target AS (SELECT public_key FROM nodes WHERE id = $1),
+filtered AS (
+  SELECT po.packet_hash, po.observer_id, po.iata, po.heard_at, po.rssi, po.snr, po.hop_count
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  JOIN target t ON t.public_key = p.origin_pubkey
+  WHERE po.heard_at >= $2
+    AND po.heard_at <= $3
+    AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+)
+SELECT
+  COUNT(DISTINCT packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT observer_id)::bigint,
+  COUNT(DISTINCT iata)::bigint,
+  MIN(heard_at),
+  MAX(heard_at),
+  AVG(snr)::double precision,
+  AVG(rssi)::double precision,
+  AVG(hop_count)::double precision
+FROM filtered`, nodeID, since, until, iataFilter).Scan(
+		&out.KPIs.PacketCount,
+		&out.KPIs.ObservationCount,
+		&out.KPIs.ActiveObservers,
+		&out.KPIs.ActiveIATAs,
+		&firstSeen,
+		&lastSeen,
+		&avgSNR,
+		&avgRSSI,
+		&avgHop,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if firstSeen.Valid {
+		ms := firstSeen.Time.UnixMilli()
+		out.KPIs.FirstHeardAt = &ms
+	}
+	if lastSeen.Valid {
+		ms := lastSeen.Time.UnixMilli()
+		out.KPIs.LastHeardAt = &ms
+	}
+	if avgSNR.Valid {
+		v := avgSNR.Float64
+		out.KPIs.AvgSNR = &v
+	}
+	if avgRSSI.Valid {
+		v := avgRSSI.Float64
+		out.KPIs.AvgRSSI = &v
+	}
+	if avgHop.Valid {
+		v := avgHop.Float64
+		out.KPIs.AvgHopCount = &v
+	}
+
+	var errMix error
+	out.PayloadMix, errMix = s.nodeAnalyticsCounts(ctx, nodeID, since, until, iataFilter, `
+SELECT p.payload_type::text AS key, p.payload_type, COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+  AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+GROUP BY p.payload_type
+ORDER BY COUNT(*) DESC, p.payload_type ASC
+LIMIT 8`, api.PayloadTypeName)
+	if errMix != nil {
+		return nil, errMix
+	}
+	out.RouteMix, errMix = s.nodeAnalyticsCounts(ctx, nodeID, since, until, iataFilter, `
+SELECT p.route_type::text AS key, p.route_type, COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+  AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+GROUP BY p.route_type
+ORDER BY COUNT(*) DESC, p.route_type ASC
+LIMIT 8`, api.RouteTypeName)
+	if errMix != nil {
+		return nil, errMix
+	}
+	out.IATAMix, errMix = s.nodeAnalyticsTextCounts(ctx, nodeID, since, until, iataFilter, `
+SELECT po.iata, po.iata, COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+  AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+GROUP BY po.iata
+ORDER BY COUNT(*) DESC, po.iata ASC
+LIMIT 8`)
+	if errMix != nil {
+		return nil, errMix
+	}
+	out.TopObservers, errMix = s.nodeAnalyticsTextCounts(ctx, nodeID, since, until, iataFilter, `
+SELECT o.id::text, COALESCE(o.display_name, left(encode(o.public_key, 'hex'), 8)), COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+JOIN observers o ON o.id = po.observer_id
+WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+  AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+GROUP BY o.id, o.display_name, o.public_key
+ORDER BY COUNT(*) DESC, MAX(po.heard_at) DESC
+LIMIT 8`)
+	if errMix != nil {
+		return nil, errMix
+	}
+	if out.Hourly, errMix = s.nodeActivityTimeline(ctx, nodeID, since, until, iataFilter); errMix != nil {
+		return nil, errMix
+	}
+	if out.SNRBuckets, errMix = s.nodeSignalBuckets(ctx, nodeID, since, until, iataFilter, "snr"); errMix != nil {
+		return nil, errMix
+	}
+	if out.RSSIBuckets, errMix = s.nodeSignalBuckets(ctx, nodeID, since, until, iataFilter, "rssi"); errMix != nil {
+		return nil, errMix
+	}
+	if out.HopBuckets, errMix = s.nodeSignalBuckets(ctx, nodeID, since, until, iataFilter, "hop"); errMix != nil {
+		return nil, errMix
+	}
+	if out.TopPeers, errMix = s.nodeAnalyticsPeers(ctx, nodeID, since, until, iataFilter); errMix != nil {
+		return nil, errMix
+	}
+	return out, nil
+}
+
+func normalizeNodeAnalyticsFilter(filter api.NodeAnalyticsFilter) (time.Time, time.Time, string) {
+	until := filter.Until
+	if until.IsZero() {
+		until = time.Now()
+	}
+	since := filter.Since
+	if since.IsZero() {
+		since = until.Add(-24 * time.Hour)
+	}
+	return since, until, strings.Join(filter.IATAs, ",")
+}
+
+func (s *Store) nodeAnalyticsCounts(ctx context.Context, nodeID uuid.UUID, since, until time.Time, iataFilter, query string, labelFn func(int16) string) ([]api.NodeAnalyticsCount, error) {
+	rows, err := s.pool.Query(ctx, query, nodeID, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.NodeAnalyticsCount{}
+	for rows.Next() {
+		var key string
+		var value int16
+		var count int64
+		if err := rows.Scan(&key, &value, &count); err != nil {
+			return nil, err
+		}
+		items = append(items, api.NodeAnalyticsCount{Key: key, Label: labelFn(value), Count: count})
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) nodeAnalyticsTextCounts(ctx context.Context, nodeID uuid.UUID, since, until time.Time, iataFilter, query string) ([]api.NodeAnalyticsCount, error) {
+	rows, err := s.pool.Query(ctx, query, nodeID, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.NodeAnalyticsCount{}
+	for rows.Next() {
+		var key, label string
+		var count int64
+		if err := rows.Scan(&key, &label, &count); err != nil {
+			return nil, err
+		}
+		items = append(items, api.NodeAnalyticsCount{Key: key, Label: label, Count: count})
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) nodeActivityTimeline(ctx context.Context, nodeID uuid.UUID, since, until time.Time, iataFilter string) ([]api.NodeActivityPoint, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT date_trunc('hour', po.heard_at) AS bucket,
+  COUNT(DISTINCT po.packet_hash)::bigint,
+  COUNT(*)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+  AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+GROUP BY bucket
+ORDER BY bucket ASC`, nodeID, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.NodeActivityPoint{}
+	for rows.Next() {
+		var bucket time.Time
+		var packets, observations int64
+		if err := rows.Scan(&bucket, &packets, &observations); err != nil {
+			return nil, err
+		}
+		items = append(items, api.NodeActivityPoint{Timestamp: bucket.UnixMilli(), Packets: packets, Observations: observations})
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) nodeSignalBuckets(ctx context.Context, nodeID uuid.UUID, since, until time.Time, iataFilter, metric string) ([]api.NodeSignalBucket, error) {
+	var bucketExpr, nullCheck string
+	switch metric {
+	case "snr":
+		nullCheck = "po.snr IS NOT NULL"
+		bucketExpr = `CASE
+  WHEN po.snr < -15 THEN '< -15'
+  WHEN po.snr < -10 THEN '-15..-10'
+  WHEN po.snr < -5 THEN '-10..-5'
+  WHEN po.snr < 0 THEN '-5..0'
+  WHEN po.snr < 5 THEN '0..5'
+  WHEN po.snr < 10 THEN '5..10'
+  ELSE '>= 10'
+END`
+	case "rssi":
+		nullCheck = "po.rssi IS NOT NULL"
+		bucketExpr = `CASE
+  WHEN po.rssi < -120 THEN '< -120'
+  WHEN po.rssi < -110 THEN '-120..-110'
+  WHEN po.rssi < -100 THEN '-110..-100'
+  WHEN po.rssi < -90 THEN '-100..-90'
+  ELSE '>= -90'
+END`
+	default:
+		nullCheck = "po.hop_count IS NOT NULL"
+		bucketExpr = `CASE
+  WHEN po.hop_count = 0 THEN '0'
+  WHEN po.hop_count = 1 THEN '1'
+  WHEN po.hop_count = 2 THEN '2'
+  WHEN po.hop_count = 3 THEN '3'
+  ELSE '4+'
+END`
+	}
+	query := fmt.Sprintf(`
+SELECT bucket, COUNT(*)::bigint FROM (
+  SELECT %s AS bucket
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  JOIN nodes n ON n.public_key = p.origin_pubkey
+  WHERE n.id = $1 AND po.heard_at >= $2 AND po.heard_at <= $3
+    AND ($4::text = '' OR po.iata = ANY(string_to_array(upper($4::text), ',')))
+    AND %s
+) b
+GROUP BY bucket
+ORDER BY bucket ASC`, bucketExpr, nullCheck)
+	rows, err := s.pool.Query(ctx, query, nodeID, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.NodeSignalBucket{}
+	for rows.Next() {
+		var bucket string
+		var count int64
+		if err := rows.Scan(&bucket, &count); err != nil {
+			return nil, err
+		}
+		items = append(items, api.NodeSignalBucket{Bucket: bucket, Count: count})
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) nodeAnalyticsPeers(ctx context.Context, nodeID uuid.UUID, since, until time.Time, iataFilter string) ([]api.NodeAnalyticsPeer, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT n.id, n.name, encode(n.public_key, 'hex'), n.node_type, nn.iata, nn.observation_count, nn.last_seen
+FROM node_neighbors nn
+JOIN nodes n ON n.id = nn.neighbor_id
+WHERE nn.node_id = $1
+  AND nn.last_seen >= $2
+  AND nn.last_seen <= $3
+  AND ($4::text = '' OR nn.iata = ANY(string_to_array(upper($4::text), ',')))
+ORDER BY nn.observation_count DESC, nn.last_seen DESC
+LIMIT 8`, nodeID, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.NodeAnalyticsPeer{}
+	for rows.Next() {
+		var item api.NodeAnalyticsPeer
+		var nodeType int16
+		var lastSeen time.Time
+		if err := rows.Scan(&item.ID, &item.Name, &item.PublicKey, &nodeType, &item.IATA, &item.ObservationCount, &lastSeen); err != nil {
+			return nil, err
+		}
+		item.NodeTypeName = api.NodeTypeName(nodeType)
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]api.NodeNeighbor, error) {
 	rows, err := s.q.GetNodeNeighbors(ctx, nodeID)
 	if err != nil {

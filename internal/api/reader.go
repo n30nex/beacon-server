@@ -120,6 +120,9 @@ type Reader interface {
 	// Pass cursor=0 to start from the beginning.
 	ListNodeObservations(ctx context.Context, nodeID uuid.UUID, cursor int64, limit int32) (Page[PacketObservationSummary], error)
 
+	// GetNodeAnalytics returns CoreScope-style activity, signal, and peer aggregates for a node.
+	GetNodeAnalytics(ctx context.Context, nodeID uuid.UUID, filter NodeAnalyticsFilter) (*NodeAnalytics, error)
+
 	// ListPackets returns a paginated list of packets with the latest observation rolled in.
 	// Pass 0 for payloadType/routeType to skip those filters.
 	// Pass nil for iatas, zero times for since/until to skip those filters.

@@ -5,7 +5,7 @@ Roadmap style: Beacon-native parity, not a CoreScope clone
 
 ## Executive Summary
 
-Beacon is already past the "blank replacement" stage: it has a React/Vite frontend, Go/Postgres backend, Redis cache support, regional Atlas, Live map console, packets, channels, map, nodes, observers, routes, traces, and Stats ops surfaces. The parity gap is now concentrated in mature specialty surfaces that CoreScope has accumulated over many releases: node analytics/reach, observer compare, global search, deeper hash/path/topology analytics, customization workflows, and formal API/contract parity.
+Beacon is already past the "blank replacement" stage: it has a React/Vite frontend, Go/Postgres backend, Redis cache support, regional Atlas, Live map console, packets, channels, map, nodes, observers, routes, traces, global search, and Stats ops surfaces. The parity gap is now concentrated in mature specialty surfaces that CoreScope has accumulated over many releases: deeper node analytics/reach, observer compare, hash/path/topology analytics, customization workflows, and formal API/contract parity.
 
 CoreScope remains the reference catalog for proven MeshCore analysis ideas. Beacon should port capabilities only when they make sense in its architecture: Go/Postgres as source of truth, Redis for hot aggregates, MapLibre/ECharts/React Query on the frontend, regional IATA/region filters as first-class state, and local-operator health as a core product concern.
 
@@ -104,7 +104,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | Node detail panel | Shared NodeDetailPanel across Atlas/Live/Map/Nodes | Done | `NodeDetailPanel.tsx`; `App.tsx` | Continue sharing one detail implementation | Existing | P0 |
 | QR codes | None | Missing | No QR implementation found | Add QR card for node identity/share links if useful locally | QR generation utility | P3 |
 | Advert timeline | Node detail has current metadata/neighbors | Missing | `NodeDetailPanel.tsx` | Add advert history endpoint and detail timeline | Store advert events/history | P2 |
-| Per-node analytics | Basic details, neighbors, Stats observer telemetry only | Missing | `NodeDetailPanel.tsx`; `StatsOverview.tsx` | Add dedicated node analytics route/page with charts | Node analytics API | P0 |
+| Per-node analytics | Compact node analytics API and NodeDetailPanel section | Partial | `internal/api/handlers/nodes.go`; `db/nodes.go`; `NodeDetailPanel.tsx` | First-pass panel covers KPIs, mix, signal buckets, and peers; dedicated chart page still needed | Node analytics UI route | P0 |
 | Per-node reach page/API | Route-neighborhood within 5 hops | Partial | `/api/v1/nodes/{id}/route-neighborhood` | Add CoreScope-style reach metrics, cache invalidation, and ranked reach rows | Graph aggregate API | P0 |
 | Peer graph/hourly heatmap | Route-neighborhood map overlay only | Partial | `useRouteOverlays.ts` | Add ECharts peer graph and hourly activity heatmap | Node analytics API | P1 |
 
@@ -149,7 +149,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 
 | CoreScope capability | Beacon equivalent | Status | Evidence | Gap notes | Dependency | Priority |
 | --- | --- | --- | --- | --- | --- | --- |
-| Global Ctrl+K search | Local per-page searches only | Missing | No global search component found | Add global command/search overlay for packets, nodes, observers, channels, routes | Unified search API | P0 |
+| Global Ctrl+K search | Search endpoint plus terminal command palette | Done | `/api/v1/search`; `GlobalSearchPalette.tsx`; `AppShell.tsx` | Keep expanding result types as new parity endpoints land | Existing | P0 |
 | Node search | Nodes server-side filters | Done | `NodeTable.tsx`; `getNodesPage` | Include in global search index | Existing | P1 |
 | Packet hash search | Packets URL/filter and analyzer | Done | `usePacketFilters.ts`; `PacketAnalyzerDrawer.tsx` | Include in global search overlay | Existing | P1 |
 | Channel search | Client-side channel filtering | Partial | `channel-filters.ts` | Add backend search or cached all-channel index if scale demands | Optional API | P2 |

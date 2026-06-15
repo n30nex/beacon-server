@@ -26,6 +26,7 @@ func NodesRouter(reader api.Reader) http.Handler {
 	r.Get("/", listNodes(reader))
 	r.Route("/{nodeId}", func(r chi.Router) {
 		r.Get("/", getNode(reader))
+		r.Get("/analytics", getNodeAnalytics(reader))
 		r.Get("/observations", listNodeObservations(reader))
 		r.Get("/neighbors", listNodeNeighbors(reader))
 		r.Get("/route-neighborhood", getNodeRouteNeighborhood(reader))
@@ -156,6 +157,65 @@ func getNode(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, node)
+	}
+}
+
+// getNodeAnalytics godoc
+//
+//	@Summary	Get node analytics
+//	@Tags		Nodes
+//	@Produce	json
+//	@Param		nodeId	path	string	true	"Node UUID"
+//	@Param		iata	query	string	false	"Filter by single IATA code"
+//	@Param		iatas	query	string	false	"Filter by multiple IATA codes, comma-separated"
+//	@Param		region	query	string	false	"Filter by region slug"
+//	@Param		regionId	query	int	false	"Filter by region ID"
+//	@Param		since	query	int	false	"Window start as epoch milliseconds"
+//	@Param		until	query	int	false	"Window end as epoch milliseconds"
+//	@Success	200	{object}	api.NodeAnalytics
+//	@Failure	400	{object}	handlers.APIError
+//	@Failure	404	{object}	handlers.APIError
+//	@Router		/nodes/{nodeId}/analytics [get]
+func getNodeAnalytics(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nodeID, err := uuid.Parse(chi.URLParam(r, "nodeId"))
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid node ID")
+			return
+		}
+		if node, err := reader.GetNode(r.Context(), nodeID); err != nil || node == nil {
+			respondError(w, http.StatusNotFound, "node not found")
+			return
+		}
+		since, err := parseEpochMillisParam(r, "since")
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "since must be epoch milliseconds")
+			return
+		}
+		until, err := parseEpochMillisParam(r, "until")
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "until must be epoch milliseconds")
+			return
+		}
+		if !since.IsZero() && !until.IsZero() && since.After(until) {
+			respondError(w, http.StatusBadRequest, "since must be before until")
+			return
+		}
+		iatas := parseIATAs(r)
+		if r.URL.Query().Get("regionId") != "" || r.URL.Query().Get("region") != "" {
+			regionIATAs, err := resolveRegionIATAs(r.Context(), r.URL.Query().Get("regionId"), r.URL.Query().Get("region"), reader)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			iatas = append(iatas, regionIATAs...)
+		}
+		analytics, err := reader.GetNodeAnalytics(r.Context(), nodeID, api.NodeAnalyticsFilter{Since: since, Until: until, IATAs: uniqueIATAs(iatas)})
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, analytics)
 	}
 }
 
