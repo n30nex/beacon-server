@@ -824,6 +824,135 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 	return items, rows.Err()
 }
 
+func (s *Store) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
+	filter.StatsFilter = normalizeStatsFilter(filter.StatsFilter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	response := &api.StatsHashPrefixLookup{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter.StatsFilter),
+		Prefix:     filter.Prefix,
+	}
+	if filter.HashSize > 0 {
+		hashSize := filter.HashSize
+		response.HashSize = &hashSize
+	}
+
+	if err := s.pool.QueryRow(ctx, statsHashPrefixBaseSQL()+`
+SELECT
+  COUNT(*)::bigint,
+  COUNT(DISTINCT packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT observer_id)::bigint,
+  COALESCE(array_agg(DISTINCT iata ORDER BY iata), ARRAY[]::text[])
+FROM matched`, filter.Since, filter.Until, iataFilter, filter.Prefix, filter.HashSize).Scan(
+		&response.MatchCount,
+		&response.PacketCount,
+		&response.ObservationCount,
+		&response.ObserverCount,
+		&response.IATAs,
+	); err != nil {
+		return nil, err
+	}
+
+	items, err := s.getStatsHashPrefixPackets(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.Items = items
+	return response, nil
+}
+
+func statsHashPrefixBaseSQL() string {
+	return `
+WITH hop_hashes AS (
+  SELECT
+    po.packet_hash,
+    po.observer_id,
+    po.iata,
+    po.heard_at,
+    po.hash_size,
+    h.hop_index::int AS hop_index,
+    encode(substring(po.path_bytes from (h.hop_index::int * po.hash_size::int) + 1 for po.hash_size::int), 'hex') AS path_hash
+  FROM packet_observations po
+  CROSS JOIN LATERAL generate_series(
+    0,
+    GREATEST(COALESCE((octet_length(po.path_bytes) / NULLIF(po.hash_size::int, 0)) - 1, -1), -1)
+  ) AS h(hop_index)
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND po.path_bytes IS NOT NULL
+    AND po.hash_size > 0
+),
+matched AS (
+  SELECT *
+  FROM hop_hashes
+  WHERE path_hash LIKE $4::text || '%'
+    AND ($5::smallint = 0 OR hash_size = $5::smallint)
+)`
+}
+
+func (s *Store) getStatsHashPrefixPackets(ctx context.Context, filter api.StatsHashPrefixFilter, iataFilter string) ([]api.StatsHashPrefixPacket, error) {
+	rows, err := s.pool.Query(ctx, statsHashPrefixBaseSQL()+`
+SELECT
+  encode(m.packet_hash, 'hex') AS packet_hash,
+  m.path_hash,
+  m.hash_size,
+  m.hop_index,
+  p.payload_type,
+  p.route_type,
+  ts.name AS scope_name,
+  array_agg(DISTINCT m.iata ORDER BY m.iata) AS iatas,
+  COUNT(*)::bigint AS observation_count,
+  COUNT(DISTINCT m.observer_id)::bigint AS observer_count,
+  (array_agg(m.observer_id ORDER BY m.heard_at DESC))[1] AS latest_observer_id,
+  (array_agg(o.display_name ORDER BY m.heard_at DESC))[1] AS latest_observer,
+  MIN(m.heard_at) AS first_heard,
+  MAX(m.heard_at) AS last_heard
+FROM matched m
+JOIN packets p ON p.packet_hash = m.packet_hash
+LEFT JOIN transport_scopes ts ON ts.id = p.scope_id
+LEFT JOIN observers o ON o.id = m.observer_id
+GROUP BY m.packet_hash, m.path_hash, m.hash_size, m.hop_index, p.payload_type, p.route_type, ts.name
+ORDER BY COUNT(*) DESC, COUNT(DISTINCT m.observer_id) DESC, MAX(m.heard_at) DESC
+LIMIT $6`, filter.Since, filter.Until, iataFilter, filter.Prefix, filter.HashSize, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsHashPrefixPacket{}
+	for rows.Next() {
+		var item api.StatsHashPrefixPacket
+		var latestObserverID uuid.UUID
+		var firstHeard, lastHeard time.Time
+		if err := rows.Scan(
+			&item.PacketHash,
+			&item.PathHash,
+			&item.HashSize,
+			&item.HopIndex,
+			&item.PayloadType,
+			&item.RouteType,
+			&item.Scope,
+			&item.IATAs,
+			&item.ObservationCount,
+			&item.ObserverCount,
+			&latestObserverID,
+			&item.LatestObserver,
+			&firstHeard,
+			&lastHeard,
+		); err != nil {
+			return nil, err
+		}
+		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
+		item.RouteTypeName = api.RouteTypeName(item.RouteType)
+		item.LatestObserverID = &latestObserverID
+		item.FirstHeard = firstHeard.UnixMilli()
+		item.LastHeard = lastHeard.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) GetStatsTopology(ctx context.Context, filter api.StatsFilter) (*api.StatsTopology, error) {
 	filter = normalizeStatsFilter(filter)
 	iataFilter := statsIATAFilter(filter.IATAs)

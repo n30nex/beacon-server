@@ -234,6 +234,48 @@ type StatsHashInconsistentPacket struct {
 	LastHeard        int64    `json:"lastHeard"`
 }
 
+// StatsHashPrefixFilter scopes an operator-entered path-hash prefix lookup.
+type StatsHashPrefixFilter struct {
+	StatsFilter
+	Prefix   string
+	HashSize int16
+}
+
+// StatsHashPrefixPacket is one packet/hop candidate that matched an
+// operator-entered path-hash prefix.
+type StatsHashPrefixPacket struct {
+	PacketHash       string     `json:"packetHash"`
+	PathHash         string     `json:"pathHash"`
+	HashSize         int16      `json:"hashSize"`
+	HopIndex         int32      `json:"hopIndex"`
+	PayloadType      int16      `json:"payloadType"`
+	PayloadTypeName  string     `json:"payloadTypeName"`
+	RouteType        int16      `json:"routeType"`
+	RouteTypeName    string     `json:"routeTypeName"`
+	Scope            *string    `json:"scope,omitempty"`
+	IATAs            []string   `json:"iatas"`
+	ObservationCount int64      `json:"observationCount"`
+	ObserverCount    int64      `json:"observerCount"`
+	LatestObserverID *uuid.UUID `json:"latestObserverId,omitempty"`
+	LatestObserver   *string    `json:"latestObserver,omitempty"`
+	FirstHeard       int64      `json:"firstHeard"`
+	LastHeard        int64      `json:"lastHeard"`
+}
+
+// StatsHashPrefixLookup is the response envelope for /stats/hash-prefix.
+type StatsHashPrefixLookup struct {
+	ServerTime       int64                   `json:"serverTime"`
+	Window           StatsWindow             `json:"window"`
+	Prefix           string                  `json:"prefix"`
+	HashSize         *int16                  `json:"hashSize,omitempty"`
+	MatchCount       int64                   `json:"matchCount"`
+	PacketCount      int64                   `json:"packetCount"`
+	ObservationCount int64                   `json:"observationCount"`
+	ObserverCount    int64                   `json:"observerCount"`
+	IATAs            []string                `json:"iatas"`
+	Items            []StatsHashPrefixPacket `json:"items"`
+}
+
 // StatsHashAnalytics is the response envelope for /stats/hash.
 type StatsHashAnalytics struct {
 	ServerTime                int64                         `json:"serverTime"`

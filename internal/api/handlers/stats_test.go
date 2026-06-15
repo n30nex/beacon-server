@@ -27,6 +27,11 @@ type statsHashReader struct {
 	filter api.StatsFilter
 }
 
+type statsHashPrefixReader struct {
+	stubReader
+	filter api.StatsHashPrefixFilter
+}
+
 type statsTopologyReader struct {
 	stubReader
 	filter api.StatsFilter
@@ -63,6 +68,23 @@ func (r *statsHashReader) GetStatsHashAnalytics(ctx context.Context, filter api.
 		TotalObservations:       7,
 		CollisionPrefixCount:    1,
 		InconsistentPacketCount: 1,
+	}, nil
+}
+
+func (r *statsHashPrefixReader) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
+	r.filter = filter
+	return &api.StatsHashPrefixLookup{
+		ServerTime:       123,
+		Window:           api.StatsWindow{Since: filter.Since.UnixMilli(), Until: filter.Until.UnixMilli(), Bucket: filter.Bucket},
+		Prefix:           filter.Prefix,
+		PacketCount:      2,
+		ObservationCount: 7,
+		Items: []api.StatsHashPrefixPacket{{
+			PacketHash:       "aabb",
+			PathHash:         "11",
+			HashSize:         1,
+			ObservationCount: 7,
+		}},
 	}, nil
 }
 
@@ -223,6 +245,70 @@ func TestGetStatsHashAnalytics_FilterContract(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body.TotalPackets != 3 || body.CollisionPrefixCount != 1 {
+		t.Fatalf("unexpected response %#v", body)
+	}
+}
+
+func TestGetStatsHashPrefixLookup_RequiresPrefix(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/hash-prefix", getStatsHashPrefixLookup(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash-prefix", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHashPrefixLookup_InvalidPrefix(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/hash-prefix", getStatsHashPrefixLookup(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash-prefix?prefix=not-hex", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHashPrefixLookup_InvalidHashSize(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/stats/hash-prefix", getStatsHashPrefixLookup(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash-prefix?prefix=11&hashSize=9", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHashPrefixLookup_FilterContract(t *testing.T) {
+	reader := &statsHashPrefixReader{}
+	r := chi.NewRouter()
+	r.Get("/stats/hash-prefix", getStatsHashPrefixLookup(reader))
+	req := httptest.NewRequest(http.MethodGet, "/stats/hash-prefix?prefix=0xAB&hashSize=1&since=1000&until=5000&bucket=1h&iatas=yvr,YOW&limit=12", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if reader.filter.Prefix != "ab" || reader.filter.HashSize != 1 {
+		t.Fatalf("unexpected prefix filter %#v", reader.filter)
+	}
+	if !reader.filter.Since.Equal(time.UnixMilli(1000)) || !reader.filter.Until.Equal(time.UnixMilli(5000)) {
+		t.Fatalf("unexpected window %#v", reader.filter)
+	}
+	if reader.filter.Bucket != "1h" || reader.filter.Limit != 12 {
+		t.Fatalf("unexpected bucket/limit %#v", reader.filter)
+	}
+	if got := strings.Join(reader.filter.IATAs, ","); got != "YVR,YOW" {
+		t.Fatalf("unexpected iatas %q", got)
+	}
+	var body api.StatsHashPrefixLookup
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Prefix != "ab" || body.PacketCount != 2 || len(body.Items) != 1 {
 		t.Fatalf("unexpected response %#v", body)
 	}
 }

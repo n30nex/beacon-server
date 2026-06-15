@@ -172,6 +172,10 @@ func (stubReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFil
 	return &api.StatsHashAnalytics{}, nil
 }
 
+func (stubReader) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
+	return &api.StatsHashPrefixLookup{}, nil
+}
+
 func (stubReader) GetStatsTopology(ctx context.Context, filter api.StatsFilter) (*api.StatsTopology, error) {
 	return &api.StatsTopology{}, nil
 }

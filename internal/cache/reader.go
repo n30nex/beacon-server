@@ -36,6 +36,7 @@ const (
 	keyStatsRegionsPrefix         = "beacon:stats:regions:"
 	keyStatsPayloadsPrefix        = "beacon:stats:payloads:"
 	keyStatsHashPrefix            = "beacon:stats:hash:"
+	keyStatsHashPrefixLookup      = "beacon:stats:hash-prefix:"
 	keyStatsTopologyPrefix        = "beacon:stats:topology:"
 	keyStatsSubpathsPrefix        = "beacon:stats:subpaths:"
 	keyStatsChannelsPrefix        = "beacon:stats:channels:"
@@ -172,6 +173,11 @@ func statsObserverCompareCacheKey(prefix string, filter api.StatsObserverCompare
 	}
 	sort.Strings(ids)
 	return fmt.Sprintf("%s:%s", base, strings.Join(ids, ","))
+}
+
+func statsHashPrefixCacheKey(prefix string, filter api.StatsHashPrefixFilter, cacheBucket time.Duration) string {
+	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
+	return fmt.Sprintf("%s:%s:%d", base, filter.Prefix, filter.HashSize)
 }
 
 // InvalidateNode removes the cached entries for a node by UUID.
@@ -368,6 +374,14 @@ func (cr *CachedReader) GetStatsHashAnalytics(ctx context.Context, filter api.St
 	key := statsFilterCacheKey(keyStatsHashPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsHashAnalytics, error) {
 		return cr.inner.GetStatsHashAnalytics(ctx, filter)
+	})
+}
+
+// GetStatsHashPrefixLookup implements [api.Reader].
+func (cr *CachedReader) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
+	key := statsHashPrefixCacheKey(keyStatsHashPrefixLookup, filter, cr.ttl.Stats)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsHashPrefixLookup, error) {
+		return cr.inner.GetStatsHashPrefixLookup(ctx, filter)
 	})
 }
 

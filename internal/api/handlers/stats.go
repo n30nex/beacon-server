@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
@@ -32,6 +33,7 @@ func StatsRouter(reader api.Reader) http.Handler {
 	r.Get("/regions", getStatsRegions(reader))
 	r.Get("/payloads", getStatsPayloads(reader))
 	r.Get("/hash", getStatsHashAnalytics(reader))
+	r.Get("/hash-prefix", getStatsHashPrefixLookup(reader))
 	r.Get("/topology", getStatsTopology(reader))
 	r.Get("/subpaths", getStatsSubpaths(reader))
 	r.Get("/channels", getStatsChannels(reader))
@@ -68,6 +70,18 @@ func (errStatsSinceAfterUntil) Error() string { return "since must be before unt
 type errStatsInvalidBucket struct{}
 
 func (errStatsInvalidBucket) Error() string { return "bucket must be one of 1h, 6h, 24h" }
+
+type errStatsInvalidHashPrefix struct{}
+
+func (errStatsInvalidHashPrefix) Error() string {
+	return "prefix must be 1-8 hexadecimal characters"
+}
+
+type errStatsInvalidHashSize struct{}
+
+func (errStatsInvalidHashSize) Error() string {
+	return "hashSize must be one of 1, 2, 3, or 4"
+}
 
 func parseStatsWindow(r *http.Request) (time.Time, time.Time, string, error) {
 	until, err := parseEpochMillisParam(r, "until")
@@ -208,9 +222,38 @@ func parseStatsObserverCompareFilter(r *http.Request, reader api.Reader) (api.St
 	return api.StatsObserverCompareFilter{StatsObserverHealthFilter: healthFilter, ObserverIDs: ids}, nil
 }
 
+func parseStatsHashPrefixFilter(r *http.Request, reader api.Reader) (api.StatsHashPrefixFilter, error) {
+	filter, err := parseStatsFilter(r, reader, 25)
+	if err != nil {
+		return api.StatsHashPrefixFilter{}, err
+	}
+	prefix := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("prefix")))
+	prefix = strings.TrimPrefix(prefix, "0x")
+	if prefix == "" || len(prefix) > 8 {
+		return api.StatsHashPrefixFilter{}, errStatsInvalidHashPrefix{}
+	}
+	for _, ch := range prefix {
+		if !unicode.Is(unicode.ASCII_Hex_Digit, ch) {
+			return api.StatsHashPrefixFilter{}, errStatsInvalidHashPrefix{}
+		}
+	}
+	var hashSize int16
+	if raw := strings.TrimSpace(r.URL.Query().Get("hashSize")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 16)
+		if err != nil || value < 1 || value > 4 {
+			return api.StatsHashPrefixFilter{}, errStatsInvalidHashSize{}
+		}
+		hashSize = int16(value)
+		if len(prefix) > int(hashSize)*2 {
+			return api.StatsHashPrefixFilter{}, errStatsInvalidHashPrefix{}
+		}
+	}
+	return api.StatsHashPrefixFilter{StatsFilter: filter, Prefix: prefix, HashSize: hashSize}, nil
+}
+
 func respondStatsParamError(w http.ResponseWriter, err error) {
 	switch err.(type) {
-	case errStatsSinceAfterUntil, errStatsInvalidBucket, errStatsObserverCompareIDs:
+	case errStatsSinceAfterUntil, errStatsInvalidBucket, errStatsObserverCompareIDs, errStatsInvalidHashPrefix, errStatsInvalidHashSize:
 		respondError(w, http.StatusBadRequest, err.Error())
 	default:
 		respondError(w, http.StatusBadRequest, "invalid stats query parameter")
@@ -346,6 +389,41 @@ func getStatsHashAnalytics(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, hashes)
+	}
+}
+
+// getStatsHashPrefixLookup godoc
+//
+//	@Summary	Lookup packets matching a path-hash prefix
+//	@Tags		Stats
+//	@Produce	json
+//	@Param		prefix	query	string	true	"Path-hash prefix, 1-8 hex characters"
+//	@Param		hashSize	query	int	false	"Optional per-hop hash size: 1, 2, 3, or 4"
+//	@Param		iatas	query	string	false	"Comma-separated IATA codes"
+//	@Param		regionId	query	int	false	"Filter by region ID, expands to member IATAs"
+//	@Param		region	query	string	false	"Filter by region slug, expands to member IATAs"
+//	@Param		range	query	string	false	"Window preset: 24h, 7d, or 30d"
+//	@Param		since	query	int	false	"Window start as epoch milliseconds"
+//	@Param		until	query	int	false	"Window end as epoch milliseconds"
+//	@Param		limit	query	int	false	"Max matching packets, clamped to 1-500"
+//	@Success	200	{object}	api.StatsHashPrefixLookup
+//	@Failure	400	{object}	handlers.APIError
+//	@Failure	500	{object}	handlers.APIError
+//	@Router		/stats/hash-prefix [get]
+func getStatsHashPrefixLookup(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filter, err := parseStatsHashPrefixFilter(r, reader)
+		if err != nil {
+			respondStatsParamError(w, err)
+			return
+		}
+		lookup, err := reader.GetStatsHashPrefixLookup(r.Context(), filter)
+		if err != nil {
+			log.Printf("api: GetStatsHashPrefixLookup failed: %v", err)
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, lookup)
 	}
 }
 

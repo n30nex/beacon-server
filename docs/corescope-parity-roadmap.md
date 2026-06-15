@@ -138,8 +138,8 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | RF analytics | Stats RF Health | Partial | `RFHealthTab.tsx`; `/api/v1/stats/rf-health` | Add richer SNR/RSSI scatter/distribution if raw metrics support it | RF aggregate endpoint | P1 |
 | Topology analytics | Stats Topology tab with verified-route repeaters, adjacent pairs, hop distribution, and best paths | Partial | `/api/v1/stats/topology`; `src/features/stats/TopologyTab.tsx` | First pass is verified-route-only; hops-vs-signal and reach rings still needed | RF join and chart polish | P0 |
 | Channel analytics | Stats Channels tab with key-state mix, activity timeline, top channels, top senders, and IATA distribution | Partial | `/api/v1/stats/channels`; `src/features/stats/ChannelsTab.tsx` | First pass covers timelines and top senders; catalogue import and mention-specific analysis still remain | Key catalogue API + channel polish | P1 |
-| Hash stats | Stats Hash tab with size mix, multibyte share, timeline, and inconsistent packet samples | Partial | `/api/v1/stats/hash`; `src/features/stats/HashTab.tsx` | First pass covers path-hash size analytics; prefix lookup tool still needed | Hash prefix API polish | P1 |
-| Hash collision matrix | Risky-prefix analytics in Stats Hash | Partial | `/api/v1/stats/hash`; `HashTab.tsx` | First pass lists short-prefix collision risks; matrix/prefix drilldown still needed | Prefix lookup and chart polish | P0 |
+| Hash stats | Stats Hash tab with size mix, multibyte share, timeline, inconsistent samples, and prefix lookup | Partial | `/api/v1/stats/hash`; `/api/v1/stats/hash-prefix`; `src/features/stats/HashTab.tsx` | Prefix lookup now scans per-hop path hashes and links packets; full collision matrix visualization still remains | Hash matrix chart polish | P1 |
+| Hash collision matrix | Risky-prefix analytics plus operator prefix lookup in Stats Hash | Partial | `/api/v1/stats/hash-prefix`; `HashTab.tsx` | First pass lists risky prefixes and lookup candidates; matrix/grid visualization still needed | Matrix chart polish | P0 |
 | Distance analytics | None | Missing | No distance analytics found | Add optional distance tab if coordinates are reliable | Geo distance query | P3 |
 | Subpath analytics | Stats Paths tab with verified-route subpath and endpoint-pair analytics | Partial | `/api/v1/stats/subpaths`; `src/features/stats/PathsTab.tsx` | First pass ranks repeated verified subpaths, endpoint pressure, length buckets, and timelines; route-specific drilldowns remain to add | Route detail drill links + chart polish | P1 |
 | Scopes analytics | Stats Scopes tab | Done | `ScopesTab.tsx`; `/api/v1/stats/scopes` | Expand with channel/radio context | Existing | P1 |
@@ -153,7 +153,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | Node search | Nodes server-side filters | Done | `NodeTable.tsx`; `getNodesPage` | Include in global search index | Existing | P1 |
 | Packet hash search | Packets URL/filter and analyzer | Done | `usePacketFilters.ts`; `PacketAnalyzerDrawer.tsx` | Include in global search overlay | Existing | P1 |
 | Channel search | Client-side channel filtering | Partial | `channel-filters.ts` | Add backend search or cached all-channel index if scale demands | Optional API | P2 |
-| Prefix tool | None | Missing | No prefix tool found | Add as part of hash collision milestone | Hash prefix API | P1 |
+| Prefix tool | Stats Hash prefix lookup with packet drilldowns | Partial | `/api/v1/stats/hash-prefix`; `src/features/stats/HashTab.tsx` | Searches path-hash prefixes across observed hops; add command-palette shortcut later | Search integration | P1 |
 
 ### Theme / Customizer
 
