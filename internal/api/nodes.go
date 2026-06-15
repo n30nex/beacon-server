@@ -132,6 +132,51 @@ type NodeAnalytics struct {
 	TopPeers     []NodeAnalyticsPeer  `json:"topPeers"`
 }
 
+// NodeReachHopBucket summarizes verified-route reach at one graph distance.
+type NodeReachHopBucket struct {
+	HopDistance      int32 `json:"hopDistance"`
+	NodeCount        int64 `json:"nodeCount"`
+	EdgeCount        int64 `json:"edgeCount"`
+	RouteCount       int64 `json:"routeCount"`
+	ObservationCount int64 `json:"observationCount"`
+}
+
+// NodeReachNode is a ranked reachable node from verified known_routes edges.
+type NodeReachNode struct {
+	ID               uuid.UUID `json:"id"`
+	Name             *string   `json:"name,omitempty"`
+	PublicKey        string    `json:"publicKey"`
+	HopDistance      int32     `json:"hopDistance"`
+	IATAs            []string  `json:"iatas"`
+	RouteCount       int64     `json:"routeCount"`
+	ObservationCount int64     `json:"observationCount"`
+	LastSeen         int64     `json:"lastSeen"`
+}
+
+// NodeReachIATA summarizes verified-route reach contribution by IATA.
+type NodeReachIATA struct {
+	IATA             string `json:"iata"`
+	NodeCount        int64  `json:"nodeCount"`
+	EdgeCount        int64  `json:"edgeCount"`
+	RouteCount       int64  `json:"routeCount"`
+	ObservationCount int64  `json:"observationCount"`
+	LastSeen         int64  `json:"lastSeen"`
+}
+
+// NodeReach is a CoreScope-style verified route-reach summary for a selected node.
+type NodeReach struct {
+	NodeID           uuid.UUID            `json:"nodeId"`
+	MaxHops          int32                `json:"maxHops"`
+	GeneratedAt      int64                `json:"generatedAt"`
+	ReachableNodes   int64                `json:"reachableNodes"`
+	VerifiedEdges    int64                `json:"verifiedEdges"`
+	RouteCount       int64                `json:"routeCount"`
+	ObservationCount int64                `json:"observationCount"`
+	HopBuckets       []NodeReachHopBucket `json:"hopBuckets"`
+	TopNodes         []NodeReachNode      `json:"topNodes"`
+	TopIATAs         []NodeReachIATA      `json:"topIatas"`
+}
+
 // NodeTypeName returns a human-readable name for a node type integer.
 // NOTE: truncation is fine here until there are at least over 200 types of node
 func NodeTypeName(t int16) string {

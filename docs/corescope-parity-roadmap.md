@@ -70,7 +70,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 
 | CoreScope capability | Beacon equivalent | Status | Evidence | Gap notes | Dependency | Priority |
 | --- | --- | --- | --- | --- | --- | --- |
-| Live animated route map | Live MapLibre console with trails, heat, packet feed, adaptive caps | Partial | `src/features/live/LiveView.tsx`; `/api/v1/live/*` | Keep improving clarity/perf, but do not add standalone VCR controls | Live health/backfill reliability | P0 |
+| Live animated route map | Live MapLibre console with trails, heat, packet feed, adaptive caps, node activity ripples, and directional packet markers | Partial | `src/features/live/LiveView.tsx`; `/api/v1/live/*` | Keep improving clarity/perf, but do not add standalone VCR controls | Live health/backfill reliability | P0 |
 | VCR playback for last 24h | Route replay link and live backfill | Deferred | `src/features/map/MapView.tsx`; `internal/api/handlers/live.go` | User direction: skip VCR controls; preserve route replay only as a drilldown, not a scrubber product | Analytics priorities first | Deferred |
 | Matrix/digital-rain mode | CRT/Bytes/Rain/Audio advanced controls | Partial | `LiveView.tsx` advanced settings | Keep optional; improve visual accuracy only after core Live perf | Canvas effect caps | P3 |
 | Compact mobile VCR controls | Mobile-first Live dock/rail work | Deferred | `LiveView.tsx` responsive controls | User direction: no VCR controls; focus mobile Live controls and analytics readability | Browser smoke | Deferred |
@@ -105,7 +105,7 @@ Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`
 | QR codes | None | Missing | No QR implementation found | Add QR card for node identity/share links if useful locally | QR generation utility | P3 |
 | Advert timeline | Node detail has current metadata/neighbors | Missing | `NodeDetailPanel.tsx` | Add advert history endpoint and detail timeline | Store advert events/history | P2 |
 | Per-node analytics | Compact node analytics API and NodeDetailPanel section | Partial | `internal/api/handlers/nodes.go`; `db/nodes.go`; `NodeDetailPanel.tsx` | First-pass panel covers KPIs, mix, signal buckets, and peers; dedicated chart page still needed | Node analytics UI route | P0 |
-| Per-node reach page/API | Route-neighborhood within 5 hops | Partial | `/api/v1/nodes/{id}/route-neighborhood` | Add CoreScope-style reach metrics, cache invalidation, and ranked reach rows | Graph aggregate API | P0 |
+| Per-node reach page/API | Verified route-neighborhood overlay plus compact reach analytics in the shared node detail panel | Partial | `/api/v1/nodes/{id}/route-neighborhood`; `/api/v1/nodes/{id}/reach`; `NodeDetailPanel.tsx` | Dedicated reach page, cache invalidation hooks, and richer peer graph still remain | Graph aggregate API | P0 |
 | Peer graph/hourly heatmap | Route-neighborhood map overlay only | Partial | `useRouteOverlays.ts` | Add ECharts peer graph and hourly activity heatmap | Node analytics API | P1 |
 
 ### Observers

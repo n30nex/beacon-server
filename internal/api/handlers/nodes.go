@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
@@ -29,6 +30,7 @@ func NodesRouter(reader api.Reader) http.Handler {
 		r.Get("/analytics", getNodeAnalytics(reader))
 		r.Get("/observations", listNodeObservations(reader))
 		r.Get("/neighbors", listNodeNeighbors(reader))
+		r.Get("/reach", getNodeReach(reader))
 		r.Get("/route-neighborhood", getNodeRouteNeighborhood(reader))
 	})
 	return r
@@ -291,6 +293,59 @@ func listNodeNeighbors(reader api.Reader) http.HandlerFunc {
 	}
 }
 
+// getNodeReach godoc
+//
+//	@Summary	Get verified route-reach analytics for a node
+//	@Tags		Nodes
+//	@Produce	json
+//	@Param		nodeId	path		string	true	"Node UUID"
+//	@Param		iata	query		string	false	"Filter by single IATA code"
+//	@Param		iatas	query		string	false	"Filter by multiple IATA codes, comma-separated"
+//	@Param		region	query		string	false	"Filter by region slug"
+//	@Param		regionId	query		int		false	"Filter by region ID"
+//	@Param		maxHops	query		int		false	"Maximum graph hops, capped at 5"
+//	@Success	200		{object}	api.NodeReach
+//	@Failure	400		{object}	handlers.APIError
+//	@Failure	500		{object}	handlers.APIError
+//	@Router		/nodes/{nodeId}/reach [get]
+func getNodeReach(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nodeID, err := uuid.Parse(chi.URLParam(r, "nodeId"))
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid node ID")
+			return
+		}
+
+		maxHops := int32(5)
+		if v := r.URL.Query().Get("maxHops"); v != "" {
+			parsed, err := strconv.ParseInt(v, 10, 32)
+			if err != nil || parsed <= 0 {
+				respondError(w, http.StatusBadRequest, "maxHops must be a positive integer")
+				return
+			}
+			if parsed < int64(maxHops) {
+				maxHops = int32(parsed)
+			}
+		}
+
+		iatas := parseIATAs(r)
+		if regionIDStr := r.URL.Query().Get("regionId"); regionIDStr != "" || r.URL.Query().Get("region") != "" {
+			regionIATAs, err := resolveRegionIATAs(r.Context(), regionIDStr, r.URL.Query().Get("region"), reader)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			iatas = append(iatas, regionIATAs...)
+		}
+		reach, err := buildNodeReach(r.Context(), reader, nodeID, uniqueIATAs(iatas), maxHops)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		respond(w, http.StatusOK, reach)
+	}
+}
+
 // getNodeRouteNeighborhood godoc
 //
 //	@Summary	List verified route-neighborhood edges for a node
@@ -342,6 +397,205 @@ func getNodeRouteNeighborhood(reader api.Reader) http.HandlerFunc {
 		}
 		respond(w, http.StatusOK, neighborhood)
 	}
+}
+
+type nodeReachNodeAccumulator struct {
+	node             api.RouteNeighborhoodNode
+	iatas            map[string]struct{}
+	routeIDs         map[int64]struct{}
+	lastSeen         int64
+	observationCount int64
+}
+
+type nodeReachHopAccumulator struct {
+	nodeCount        int64
+	edgeCount        int64
+	routeIDs         map[int64]struct{}
+	observationCount int64
+}
+
+type nodeReachIATAAccumulator struct {
+	iata             string
+	nodeIDs          map[uuid.UUID]struct{}
+	routeIDs         map[int64]struct{}
+	edgeCount        int64
+	lastSeen         int64
+	observationCount int64
+}
+
+func buildNodeReach(ctx context.Context, reader api.Reader, nodeID uuid.UUID, iatas []string, maxHops int32) (*api.NodeReach, error) {
+	neighborhood, err := buildRouteNeighborhood(ctx, reader, nodeID, iatas, maxHops)
+	if err != nil {
+		return nil, err
+	}
+
+	nodesByID := make(map[uuid.UUID]api.RouteNeighborhoodNode, len(neighborhood.Nodes))
+	hopBuckets := make(map[int32]*nodeReachHopAccumulator)
+	nodeAccs := make(map[uuid.UUID]*nodeReachNodeAccumulator)
+	iataAccs := make(map[string]*nodeReachIATAAccumulator)
+	routeIDs := make(map[int64]struct{})
+	var observationCount int64
+
+	for _, node := range neighborhood.Nodes {
+		nodesByID[node.ID] = node
+		if node.ID == nodeID {
+			continue
+		}
+		acc := hopBuckets[node.HopDistance]
+		if acc == nil {
+			acc = &nodeReachHopAccumulator{routeIDs: make(map[int64]struct{})}
+			hopBuckets[node.HopDistance] = acc
+		}
+		acc.nodeCount += 1
+		nodeAccs[node.ID] = &nodeReachNodeAccumulator{
+			node:     node,
+			iatas:    make(map[string]struct{}),
+			routeIDs: make(map[int64]struct{}),
+		}
+	}
+
+	for _, edge := range neighborhood.Edges {
+		observationCount += edge.ObservationCount
+		hopAcc := hopBuckets[edge.HopDistance]
+		if hopAcc == nil {
+			hopAcc = &nodeReachHopAccumulator{routeIDs: make(map[int64]struct{})}
+			hopBuckets[edge.HopDistance] = hopAcc
+		}
+		hopAcc.edgeCount += 1
+		hopAcc.observationCount += edge.ObservationCount
+
+		iataAcc := iataAccs[edge.IATA]
+		if iataAcc == nil {
+			iataAcc = &nodeReachIATAAccumulator{
+				iata:     edge.IATA,
+				nodeIDs:  make(map[uuid.UUID]struct{}),
+				routeIDs: make(map[int64]struct{}),
+			}
+			iataAccs[edge.IATA] = iataAcc
+		}
+		iataAcc.edgeCount += 1
+		iataAcc.observationCount += edge.ObservationCount
+		if edge.LastSeen > iataAcc.lastSeen {
+			iataAcc.lastSeen = edge.LastSeen
+		}
+
+		for _, routeID := range edge.RouteIDs {
+			routeIDs[routeID] = struct{}{}
+			hopAcc.routeIDs[routeID] = struct{}{}
+			iataAcc.routeIDs[routeID] = struct{}{}
+		}
+
+		for _, endpointID := range []uuid.UUID{edge.FromNodeID, edge.ToNodeID} {
+			if endpointID == nodeID {
+				continue
+			}
+			if _, ok := nodesByID[endpointID]; !ok {
+				continue
+			}
+			iataAcc.nodeIDs[endpointID] = struct{}{}
+			nodeAcc := nodeAccs[endpointID]
+			if nodeAcc == nil {
+				continue
+			}
+			nodeAcc.iatas[edge.IATA] = struct{}{}
+			nodeAcc.observationCount += edge.ObservationCount
+			if edge.LastSeen > nodeAcc.lastSeen {
+				nodeAcc.lastSeen = edge.LastSeen
+			}
+			for _, routeID := range edge.RouteIDs {
+				nodeAcc.routeIDs[routeID] = struct{}{}
+			}
+		}
+	}
+
+	buckets := make([]api.NodeReachHopBucket, 0, len(hopBuckets))
+	for hopDistance, acc := range hopBuckets {
+		if hopDistance <= 0 || hopDistance > maxHops {
+			continue
+		}
+		buckets = append(buckets, api.NodeReachHopBucket{
+			HopDistance:      hopDistance,
+			NodeCount:        acc.nodeCount,
+			EdgeCount:        acc.edgeCount,
+			RouteCount:       int64(len(acc.routeIDs)),
+			ObservationCount: acc.observationCount,
+		})
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].HopDistance < buckets[j].HopDistance })
+
+	topNodes := make([]api.NodeReachNode, 0, len(nodeAccs))
+	for id, acc := range nodeAccs {
+		if id == nodeID {
+			continue
+		}
+		nodeIATAs := make([]string, 0, len(acc.iatas))
+		for iata := range acc.iatas {
+			nodeIATAs = append(nodeIATAs, iata)
+		}
+		sort.Strings(nodeIATAs)
+		topNodes = append(topNodes, api.NodeReachNode{
+			ID:               id,
+			Name:             acc.node.Name,
+			PublicKey:        acc.node.PublicKey,
+			HopDistance:      acc.node.HopDistance,
+			IATAs:            nodeIATAs,
+			RouteCount:       int64(len(acc.routeIDs)),
+			ObservationCount: acc.observationCount,
+			LastSeen:         acc.lastSeen,
+		})
+	}
+	sort.Slice(topNodes, func(i, j int) bool {
+		if topNodes[i].ObservationCount != topNodes[j].ObservationCount {
+			return topNodes[i].ObservationCount > topNodes[j].ObservationCount
+		}
+		if topNodes[i].RouteCount != topNodes[j].RouteCount {
+			return topNodes[i].RouteCount > topNodes[j].RouteCount
+		}
+		if topNodes[i].HopDistance != topNodes[j].HopDistance {
+			return topNodes[i].HopDistance < topNodes[j].HopDistance
+		}
+		return topNodes[i].ID.String() < topNodes[j].ID.String()
+	})
+	if len(topNodes) > 12 {
+		topNodes = topNodes[:12]
+	}
+
+	topIATAs := make([]api.NodeReachIATA, 0, len(iataAccs))
+	for _, acc := range iataAccs {
+		topIATAs = append(topIATAs, api.NodeReachIATA{
+			IATA:             acc.iata,
+			NodeCount:        int64(len(acc.nodeIDs)),
+			EdgeCount:        acc.edgeCount,
+			RouteCount:       int64(len(acc.routeIDs)),
+			ObservationCount: acc.observationCount,
+			LastSeen:         acc.lastSeen,
+		})
+	}
+	sort.Slice(topIATAs, func(i, j int) bool {
+		if topIATAs[i].ObservationCount != topIATAs[j].ObservationCount {
+			return topIATAs[i].ObservationCount > topIATAs[j].ObservationCount
+		}
+		if topIATAs[i].NodeCount != topIATAs[j].NodeCount {
+			return topIATAs[i].NodeCount > topIATAs[j].NodeCount
+		}
+		return topIATAs[i].IATA < topIATAs[j].IATA
+	})
+	if len(topIATAs) > 8 {
+		topIATAs = topIATAs[:8]
+	}
+
+	return &api.NodeReach{
+		NodeID:           nodeID,
+		MaxHops:          maxHops,
+		GeneratedAt:      time.Now().UnixMilli(),
+		ReachableNodes:   int64(len(nodeAccs)),
+		VerifiedEdges:    int64(len(neighborhood.Edges)),
+		RouteCount:       int64(len(routeIDs)),
+		ObservationCount: observationCount,
+		HopBuckets:       buckets,
+		TopNodes:         topNodes,
+		TopIATAs:         topIATAs,
+	}, nil
 }
 
 type routeEdgeAccumulator struct {
