@@ -35,12 +35,12 @@ Recommended strategy:
 CoreScope README parity targets captured:
 
 - In-memory Go read path with sub-millisecond packet queries and under-100 ms API goal.
-- Live trace map with packet route visualization, VCR-style playback, timeline scrub, and up to 4x replay.
+- Live trace map with packet route visualization; Beacon will keep cinematic Live animation and route drilldowns, but dedicated VCR scrub/speed controls are no longer an active parity target.
 - Packet feed with byte-level breakdown, resizable columns, detail pane, and "My Nodes".
 - Network overview with node, packet, and observer coverage.
 - Per-node analytics: activity timeline, packet type breakdown, SNR, hop count, peer graph, hourly heatmap.
 - Channel chat with decoded messages, sender names, mentions, and timestamps.
-- Mobile-ready layout with compact VCR controls.
+- Mobile-ready layout with compact Live controls and analytics-first drilldowns.
 - 11 analytics tabs covering RF, topology, channels, hash stats, distance, route patterns, and more.
 - Node directory with role tabs, detail panel, QR codes, and advert timeline.
 - Packet tracing across observers with SNR/RSSI timeline.
@@ -66,14 +66,14 @@ CoreScope changelog highlights to include in parity scope:
 
 Status legend: `Done`, `Partial`, `Missing`, `Not Applicable`, `Beacon Superset`.
 
-### Live / VCR
+### Live / Map Motion
 
 | CoreScope capability | Beacon equivalent | Status | Evidence | Gap notes | Dependency | Priority |
 | --- | --- | --- | --- | --- | --- | --- |
-| Live animated route map | Live MapLibre console with trails, heat, packet feed, adaptive caps | Partial | `src/features/live/LiveView.tsx`; `/api/v1/live/*` | Good live surface, but not a full historical VCR with scrubbed replay window | Backfill cursor and replay model | P0 |
-| VCR playback for last 24h | Route replay link and live backfill | Partial | `src/features/map/MapView.tsx`; `internal/api/handlers/live.go` | Add timeline scrub/speed for historical packets without restoring removed Atlas replay | Replay query/API and bounded animation queue | P1 |
+| Live animated route map | Live MapLibre console with trails, heat, packet feed, adaptive caps | Partial | `src/features/live/LiveView.tsx`; `/api/v1/live/*` | Keep improving clarity/perf, but do not add standalone VCR controls | Live health/backfill reliability | P0 |
+| VCR playback for last 24h | Route replay link and live backfill | Deferred | `src/features/map/MapView.tsx`; `internal/api/handlers/live.go` | User direction: skip VCR controls; preserve route replay only as a drilldown, not a scrubber product | Analytics priorities first | Deferred |
 | Matrix/digital-rain mode | CRT/Bytes/Rain/Audio advanced controls | Partial | `LiveView.tsx` advanced settings | Keep optional; improve visual accuracy only after core Live perf | Canvas effect caps | P3 |
-| Compact mobile VCR controls | Mobile-first Live dock/rail work | Partial | `LiveView.tsx` responsive controls | Needs regression suite for no overlap and map prominence | Browser smoke | P1 |
+| Compact mobile VCR controls | Mobile-first Live dock/rail work | Deferred | `LiveView.tsx` responsive controls | User direction: no VCR controls; focus mobile Live controls and analytics readability | Browser smoke | Deferred |
 | Live route-type filtering | WebSocket route filters and live backfill filters | Done | `internal/ws/handler.go`; `internal/hub/hub.go`; `internal/api/handlers/live.go` | Maintain as contract in tests | Existing API | P0 |
 
 ### Packets
@@ -330,6 +330,7 @@ Acceptance:
 | Excel-like packet table cloning | Deferred | Beacon should keep responsive packet rows unless operators specifically need spreadsheet affordances. |
 | Protobuf contract | Deferred | Beacon already uses OpenAPI/TypeScript shapes; add proto only for external client demand. |
 | Sonification-first experiences | Deferred | Keep audio as optional Live advanced mode, not a parity blocker. |
+| Dedicated VCR scrub/speed controls | Deferred | User direction is to skip VCR controls and prioritize analytics. Keep lightweight route replay/drilldowns only where they support analysis. |
 | Full theme customizer before analytics parity | Deferred | Operator analytics/search/reach have higher value. |
 
 ## Ready For Implementation Checklist
