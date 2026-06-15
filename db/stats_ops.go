@@ -627,6 +627,7 @@ risky AS (
     AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
     AND po.path_bytes IS NOT NULL
     AND po.hash_size > 0
+    AND octet_length(po.path_bytes) >= po.hash_size
   GROUP BY encode(substring(po.path_bytes from 1 for LEAST(po.hash_size::int, 2)), 'hex'), po.hash_size, po.iata
   HAVING COUNT(DISTINCT po.packet_hash) > 1
 )
@@ -747,6 +748,7 @@ WHERE po.heard_at >= $1
   AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
   AND po.path_bytes IS NOT NULL
   AND po.hash_size > 0
+  AND octet_length(po.path_bytes) >= po.hash_size
 GROUP BY prefix, po.hash_size, po.iata
 HAVING COUNT(DISTINCT po.packet_hash) > 1
 ORDER BY COUNT(DISTINCT po.packet_hash) DESC, COUNT(*) DESC, MAX(po.heard_at) DESC
