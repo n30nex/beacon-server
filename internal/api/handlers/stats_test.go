@@ -68,6 +68,14 @@ func (r *statsHashReader) GetStatsHashAnalytics(ctx context.Context, filter api.
 		TotalObservations:       7,
 		CollisionPrefixCount:    1,
 		InconsistentPacketCount: 1,
+		CollisionMatrix: []api.StatsHashCollisionCell{{
+			HashSize:         1,
+			IATA:             "YOW",
+			PrefixCount:      2,
+			PacketCount:      3,
+			ObservationCount: 7,
+			ObserverCount:    2,
+		}},
 	}, nil
 }
 
@@ -244,8 +252,11 @@ func TestGetStatsHashAnalytics_FilterContract(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.TotalPackets != 3 || body.CollisionPrefixCount != 1 {
+	if body.TotalPackets != 3 || body.CollisionPrefixCount != 1 || len(body.CollisionMatrix) != 1 {
 		t.Fatalf("unexpected response %#v", body)
+	}
+	if body.CollisionMatrix[0].IATA != "YOW" || body.CollisionMatrix[0].PrefixCount != 2 {
+		t.Fatalf("unexpected collision matrix %#v", body.CollisionMatrix)
 	}
 }
 

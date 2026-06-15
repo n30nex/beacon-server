@@ -222,6 +222,18 @@ type StatsHashCollisionPrefix struct {
 	LastHeard        int64  `json:"lastHeard"`
 }
 
+// StatsHashCollisionCell summarizes collision-risk prefixes for one IATA/hash-size cell.
+type StatsHashCollisionCell struct {
+	HashSize         int16  `json:"hashSize"`
+	IATA             string `json:"iata"`
+	PrefixCount      int64  `json:"prefixCount"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+	ObserverCount    int64  `json:"observerCount"`
+	FirstHeard       int64  `json:"firstHeard"`
+	LastHeard        int64  `json:"lastHeard"`
+}
+
 // StatsHashInconsistentPacket shows a packet observed with multiple path-hash sizes.
 type StatsHashInconsistentPacket struct {
 	PacketHash       string   `json:"packetHash"`
@@ -288,6 +300,7 @@ type StatsHashAnalytics struct {
 	SizeMix                   []StatsHashSizeCount          `json:"sizeMix"`
 	Timeline                  []StatsHashTimelinePoint      `json:"timeline"`
 	RiskyPrefixes             []StatsHashCollisionPrefix    `json:"riskyPrefixes"`
+	CollisionMatrix           []StatsHashCollisionCell      `json:"collisionMatrix"`
 	InconsistentPacketSamples []StatsHashInconsistentPacket `json:"inconsistentPacketSamples"`
 }
 

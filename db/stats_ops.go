@@ -619,17 +619,29 @@ WITH inconsistent AS (
   GROUP BY po.packet_hash
   HAVING COUNT(DISTINCT po.hash_size) > 1
 ),
-risky AS (
-  SELECT 1
+risky_hops AS (
+  SELECT
+    encode(substring(po.path_bytes from (h.hop_index::int * po.hash_size::int) + 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
+    po.hash_size,
+    po.iata,
+    po.packet_hash
   FROM packet_observations po
+  CROSS JOIN LATERAL generate_series(
+    0,
+    GREATEST(COALESCE((octet_length(po.path_bytes) / NULLIF(po.hash_size::int, 0)) - 1, -1), -1)
+  ) AS h(hop_index)
   WHERE po.heard_at >= $1
     AND po.heard_at <= $2
     AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
     AND po.path_bytes IS NOT NULL
     AND po.hash_size > 0
     AND octet_length(po.path_bytes) >= po.hash_size
-  GROUP BY encode(substring(po.path_bytes from 1 for LEAST(po.hash_size::int, 2)), 'hex'), po.hash_size, po.iata
-  HAVING COUNT(DISTINCT po.packet_hash) > 1
+),
+risky AS (
+  SELECT 1
+  FROM risky_hops
+  GROUP BY prefix, hash_size, iata
+  HAVING COUNT(DISTINCT packet_hash) > 1
 )
 SELECT
   COUNT(DISTINCT po.packet_hash)::bigint,
@@ -668,6 +680,12 @@ WHERE po.heard_at >= $1
 		return nil, err
 	}
 	response.RiskyPrefixes = risky
+
+	matrix, err := s.getStatsHashCollisionMatrix(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.CollisionMatrix = matrix
 
 	inconsistent, err := s.getStatsHashInconsistentPackets(ctx, filter, iataFilter)
 	if err != nil {
@@ -731,27 +749,51 @@ ORDER BY bucket ASC, po.hash_size ASC`, filter.Since, filter.Until, iataFilter, 
 	return points, rows.Err()
 }
 
+func statsHashHopPrefixCTE() string {
+	return `
+WITH hop_prefixes AS (
+  SELECT
+    encode(substring(po.path_bytes from (h.hop_index::int * po.hash_size::int) + 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
+    po.hash_size,
+    po.iata,
+    po.packet_hash,
+    po.observer_id,
+    po.heard_at
+  FROM packet_observations po
+  CROSS JOIN LATERAL generate_series(
+    0,
+    GREATEST(COALESCE((octet_length(po.path_bytes) / NULLIF(po.hash_size::int, 0)) - 1, -1), -1)
+  ) AS h(hop_index)
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND po.path_bytes IS NOT NULL
+    AND po.hash_size > 0
+    AND octet_length(po.path_bytes) >= po.hash_size
+),
+risky_keys AS (
+  SELECT prefix, hash_size, iata
+  FROM hop_prefixes
+  GROUP BY prefix, hash_size, iata
+  HAVING COUNT(DISTINCT packet_hash) > 1
+)`
+}
+
 func (s *Store) getStatsHashRiskyPrefixes(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashCollisionPrefix, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool.Query(ctx, statsHashHopPrefixCTE()+`
 SELECT
-  encode(substring(po.path_bytes from 1 for LEAST(po.hash_size::int, 2)), 'hex') AS prefix,
-  po.hash_size,
-  po.iata,
-  COUNT(DISTINCT po.packet_hash)::bigint,
+  hp.prefix,
+  hp.hash_size,
+  hp.iata,
+  COUNT(DISTINCT hp.packet_hash)::bigint,
   COUNT(*)::bigint,
-  COUNT(DISTINCT po.observer_id)::bigint,
-  MIN(po.heard_at),
-  MAX(po.heard_at)
-FROM packet_observations po
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  AND po.path_bytes IS NOT NULL
-  AND po.hash_size > 0
-  AND octet_length(po.path_bytes) >= po.hash_size
-GROUP BY prefix, po.hash_size, po.iata
-HAVING COUNT(DISTINCT po.packet_hash) > 1
-ORDER BY COUNT(DISTINCT po.packet_hash) DESC, COUNT(*) DESC, MAX(po.heard_at) DESC
+  COUNT(DISTINCT hp.observer_id)::bigint,
+  MIN(hp.heard_at),
+  MAX(hp.heard_at)
+FROM hop_prefixes hp
+JOIN risky_keys rk USING (prefix, hash_size, iata)
+GROUP BY hp.prefix, hp.hash_size, hp.iata
+ORDER BY COUNT(DISTINCT hp.packet_hash) DESC, COUNT(*) DESC, MAX(hp.heard_at) DESC
 LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 	if err != nil {
 		return nil, err
@@ -765,6 +807,48 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 			&item.Prefix,
 			&item.HashSize,
 			&item.IATA,
+			&item.PacketCount,
+			&item.ObservationCount,
+			&item.ObserverCount,
+			&firstHeard,
+			&lastHeard,
+		); err != nil {
+			return nil, err
+		}
+		item.FirstHeard = firstHeard.UnixMilli()
+		item.LastHeard = lastHeard.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsHashCollisionMatrix(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsHashCollisionCell, error) {
+	rows, err := s.pool.Query(ctx, statsHashHopPrefixCTE()+`
+SELECT
+  hp.hash_size,
+  hp.iata,
+  COUNT(DISTINCT hp.prefix)::bigint,
+  COUNT(DISTINCT hp.packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT hp.observer_id)::bigint,
+  MIN(hp.heard_at),
+  MAX(hp.heard_at)
+FROM hop_prefixes hp
+JOIN risky_keys rk USING (prefix, hash_size, iata)
+GROUP BY hp.hash_size, hp.iata
+ORDER BY hp.hash_size ASC, COUNT(DISTINCT hp.prefix) DESC, hp.iata ASC`, filter.Since, filter.Until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsHashCollisionCell{}
+	for rows.Next() {
+		var item api.StatsHashCollisionCell
+		var firstHeard, lastHeard time.Time
+		if err := rows.Scan(
+			&item.HashSize,
+			&item.IATA,
+			&item.PrefixCount,
 			&item.PacketCount,
 			&item.ObservationCount,
 			&item.ObserverCount,
