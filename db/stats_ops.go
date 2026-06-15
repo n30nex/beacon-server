@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/hex"
 	"math"
 	"sort"
 	"strings"
@@ -1031,6 +1032,441 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
 		}
 		item.FirstSeen = firstSeen.UnixMilli()
 		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetStatsChannels(ctx context.Context, filter api.StatsFilter) (*api.StatsChannels, error) {
+	filter = normalizeStatsFilter(filter)
+	iataFilter := statsIATAFilter(filter.IATAs)
+	response := &api.StatsChannels{
+		ServerTime: time.Now().UnixMilli(),
+		Window:     statsWindow(filter),
+	}
+
+	if err := s.pool.QueryRow(ctx, `
+WITH channel_packets AS (
+  SELECT p.channel_hash, po.packet_hash, po.observer_id, po.iata, po.heard_at
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE p.channel_hash IS NOT NULL
+    AND po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+),
+channel_rows AS (
+  SELECT DISTINCT ON (c.channel_hash)
+    c.channel_hash,
+    COALESCE(c.key_known, false) AS key_known,
+    COALESCE(c.is_hashtag, false) AS is_hashtag,
+    COALESCE(c.is_public, false) AS is_public
+  FROM channels c
+  ORDER BY c.channel_hash, COALESCE(c.key_known, false) DESC, COALESCE(c.is_public, false) DESC, c.last_seen DESC
+),
+active_channels AS (
+  SELECT
+    cp.channel_hash,
+    COALESCE(cr.key_known, false) AS key_known,
+    COALESCE(cr.is_hashtag, false) AS is_hashtag,
+    COALESCE(cr.is_public, false) AS is_public
+  FROM channel_packets cp
+  LEFT JOIN channel_rows cr ON cr.channel_hash = cp.channel_hash
+  GROUP BY cp.channel_hash, cr.key_known, cr.is_hashtag, cr.is_public
+),
+message_rows AS (
+  SELECT DISTINCT cm.id
+  FROM channel_messages cm
+  JOIN channel_packets cp ON cp.packet_hash = cm.packet_hash
+)
+SELECT
+  COUNT(*)::bigint,
+  COUNT(*) FILTER (WHERE key_known)::bigint,
+  COUNT(*) FILTER (WHERE NOT key_known)::bigint,
+  COUNT(*) FILTER (WHERE is_hashtag)::bigint,
+  COUNT(*) FILTER (WHERE is_public)::bigint,
+  (SELECT COUNT(*)::bigint FROM message_rows),
+  (SELECT COUNT(DISTINCT packet_hash)::bigint FROM channel_packets),
+  (SELECT COUNT(*)::bigint FROM channel_packets),
+  (SELECT COUNT(DISTINCT iata)::bigint FROM channel_packets)
+FROM active_channels`, filter.Since, filter.Until, iataFilter).Scan(
+		&response.TotalChannels,
+		&response.KnownChannels,
+		&response.UnknownChannels,
+		&response.HashtagChannels,
+		&response.PublicChannels,
+		&response.MessageCount,
+		&response.PacketCount,
+		&response.ObservationCount,
+		&response.ActiveIATAs,
+	); err != nil {
+		return nil, err
+	}
+
+	keyMix, err := s.getStatsChannelKeyMix(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.KeyMix = keyMix
+
+	timeline, err := s.getStatsChannelTimeline(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.Timeline = timeline
+
+	topChannels, err := s.getStatsTopChannels(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopChannels = topChannels
+
+	topSenders, err := s.getStatsChannelTopSenders(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopSenders = topSenders
+
+	topIATAs, err := s.getStatsChannelTopIATAs(ctx, filter, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	response.TopIATAs = topIATAs
+	return response, nil
+}
+
+func channelKeyState(isPublic, isHashtag, keyKnown bool) string {
+	switch {
+	case isPublic:
+		return "public"
+	case isHashtag:
+		return "hashtag"
+	case keyKnown:
+		return "known"
+	default:
+		return "unknown"
+	}
+}
+
+func (s *Store) getStatsChannelKeyMix(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsChannelKeyBucket, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH channel_packets AS (
+  SELECT p.channel_hash, po.packet_hash, po.heard_at
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE p.channel_hash IS NOT NULL
+    AND po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+),
+channel_rows AS (
+  SELECT DISTINCT ON (c.channel_hash)
+    c.channel_hash,
+    COALESCE(c.key_known, false) AS key_known,
+    COALESCE(c.is_hashtag, false) AS is_hashtag,
+    COALESCE(c.is_public, false) AS is_public
+  FROM channels c
+  ORDER BY c.channel_hash, COALESCE(c.key_known, false) DESC, COALESCE(c.is_public, false) DESC, c.last_seen DESC
+),
+bucketed AS (
+  SELECT
+    CASE WHEN COALESCE(cr.is_public, false) THEN 'public'
+         WHEN COALESCE(cr.is_hashtag, false) THEN 'hashtag'
+         WHEN COALESCE(cr.key_known, false) THEN 'known'
+         ELSE 'unknown' END AS key_state,
+    cp.channel_hash,
+    cp.packet_hash
+  FROM channel_packets cp
+  LEFT JOIN channel_rows cr ON cr.channel_hash = cp.channel_hash
+),
+message_rows AS (
+  SELECT DISTINCT
+    CASE WHEN COALESCE(cr.is_public, false) THEN 'public'
+         WHEN COALESCE(cr.is_hashtag, false) THEN 'hashtag'
+         WHEN COALESCE(cr.key_known, false) THEN 'known'
+         ELSE 'unknown' END AS key_state,
+    cm.id
+  FROM channel_messages cm
+  JOIN channel_packets cp ON cp.packet_hash = cm.packet_hash
+  LEFT JOIN channel_rows cr ON cr.channel_hash = cp.channel_hash
+)
+SELECT
+  b.key_state,
+  COUNT(DISTINCT b.channel_hash)::bigint,
+  COALESCE((SELECT COUNT(*)::bigint FROM message_rows mr WHERE mr.key_state = b.key_state), 0)::bigint,
+  COUNT(DISTINCT b.packet_hash)::bigint,
+  COUNT(*)::bigint
+FROM bucketed b
+GROUP BY b.key_state
+ORDER BY COUNT(*) DESC, b.key_state ASC`, filter.Since, filter.Until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsChannelKeyBucket{}
+	for rows.Next() {
+		var item api.StatsChannelKeyBucket
+		if err := rows.Scan(&item.KeyState, &item.ChannelCount, &item.MessageCount, &item.PacketCount, &item.ObservationCount); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsChannelTimeline(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsChannelTimelinePoint, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH channel_rows AS (
+  SELECT DISTINCT ON (c.channel_hash)
+    c.channel_hash,
+    COALESCE(c.key_known, false) AS key_known,
+    COALESCE(c.is_hashtag, false) AS is_hashtag,
+    COALESCE(c.is_public, false) AS is_public
+  FROM channels c
+  ORDER BY c.channel_hash, COALESCE(c.key_known, false) DESC, COALESCE(c.is_public, false) DESC, c.last_seen DESC
+),
+base AS (
+  SELECT
+    to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
+    CASE WHEN COALESCE(cr.is_public, false) THEN 'public'
+         WHEN COALESCE(cr.is_hashtag, false) THEN 'hashtag'
+         WHEN COALESCE(cr.key_known, false) THEN 'known'
+         ELSE 'unknown' END AS key_state,
+    po.packet_hash,
+    cm.id AS message_id
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  LEFT JOIN channel_rows cr ON cr.channel_hash = p.channel_hash
+  LEFT JOIN channel_messages cm ON cm.packet_hash = po.packet_hash
+  WHERE p.channel_hash IS NOT NULL
+    AND po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+)
+SELECT
+  bucket,
+  key_state,
+  COUNT(DISTINCT message_id)::bigint,
+  COUNT(DISTINCT packet_hash)::bigint,
+  COUNT(*)::bigint
+FROM base
+GROUP BY bucket, key_state
+ORDER BY bucket ASC, key_state ASC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	points := []api.StatsChannelTimelinePoint{}
+	for rows.Next() {
+		var point api.StatsChannelTimelinePoint
+		var bucket time.Time
+		if err := rows.Scan(&bucket, &point.KeyState, &point.MessageCount, &point.PacketCount, &point.ObservationCount); err != nil {
+			return nil, err
+		}
+		point.T = bucket.UnixMilli()
+		points = append(points, point)
+	}
+	return points, rows.Err()
+}
+
+func (s *Store) getStatsTopChannels(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsChannelRow, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH channel_rows AS (
+  SELECT DISTINCT ON (c.channel_hash)
+    c.channel_hash,
+    c.id,
+    c.name,
+    COALESCE(c.key_known, false) AS key_known,
+    COALESCE(c.is_hashtag, false) AS is_hashtag,
+    COALESCE(c.is_public, false) AS is_public
+  FROM channels c
+  ORDER BY c.channel_hash, COALESCE(c.key_known, false) DESC, COALESCE(c.is_public, false) DESC, c.last_seen DESC
+),
+base AS (
+  SELECT
+    p.channel_hash,
+    po.packet_hash,
+    po.observer_id,
+    po.iata,
+    po.heard_at,
+    cm.id AS message_id
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  LEFT JOIN channel_messages cm ON cm.packet_hash = po.packet_hash
+  WHERE p.channel_hash IS NOT NULL
+    AND po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+),
+latest AS (
+  SELECT DISTINCT ON (channel_hash)
+    channel_hash,
+    iata AS latest_iata,
+    heard_at AS last_seen
+  FROM base
+  ORDER BY channel_hash, heard_at DESC
+)
+SELECT
+  cr.id,
+  b.channel_hash,
+  cr.name,
+  COALESCE(cr.is_public, false),
+  COALESCE(cr.is_hashtag, false),
+  COALESCE(cr.key_known, false),
+  COUNT(DISTINCT b.message_id)::bigint,
+  COUNT(DISTINCT b.packet_hash)::bigint,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT b.iata)::bigint,
+  COUNT(DISTINCT b.observer_id)::bigint,
+  COALESCE(l.latest_iata, '') AS latest_iata,
+  l.last_seen
+FROM base b
+LEFT JOIN channel_rows cr ON cr.channel_hash = b.channel_hash
+LEFT JOIN latest l ON l.channel_hash = b.channel_hash
+GROUP BY cr.id, b.channel_hash, cr.name, cr.is_public, cr.is_hashtag, cr.key_known, l.latest_iata, l.last_seen
+ORDER BY COUNT(*) DESC, l.last_seen DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsChannelRow{}
+	for rows.Next() {
+		var item api.StatsChannelRow
+		var channelID *int32
+		var channelHash []byte
+		var isPublic bool
+		var lastSeen time.Time
+		if err := rows.Scan(
+			&channelID,
+			&channelHash,
+			&item.Name,
+			&isPublic,
+			&item.IsHashtag,
+			&item.KeyKnown,
+			&item.MessageCount,
+			&item.PacketCount,
+			&item.ObservationCount,
+			&item.ActiveIATAs,
+			&item.ActiveObservers,
+			&item.LatestIATA,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		item.ChannelID = channelID
+		item.ChannelHash = hex.EncodeToString(channelHash)
+		item.KeyState = channelKeyState(isPublic, item.IsHashtag, item.KeyKnown)
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsChannelTopSenders(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsChannelSender, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH base AS (
+  SELECT DISTINCT
+    cm.id,
+    cm.channel_id,
+    cm.packet_hash,
+    cm.sender_name,
+    cm.sender_pubkey,
+    cm.sent_at,
+    c.channel_hash,
+    c.name AS channel_name
+  FROM channel_messages cm
+  JOIN channels c ON c.id = cm.channel_id
+  JOIN packet_observations po ON po.packet_hash = cm.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+)
+SELECT
+  COALESCE(NULLIF(b.sender_name, ''), 'UNKNOWN') AS sender_name,
+  b.sender_pubkey,
+  b.channel_id,
+  b.channel_hash,
+  b.channel_name,
+  COUNT(DISTINCT b.id)::bigint,
+  COUNT(po.id)::bigint,
+  MIN(b.sent_at),
+  MAX(b.sent_at)
+FROM base b
+JOIN packet_observations po ON po.packet_hash = b.packet_hash
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY COALESCE(NULLIF(b.sender_name, ''), 'UNKNOWN'), b.sender_pubkey, b.channel_id, b.channel_hash, b.channel_name
+ORDER BY COUNT(DISTINCT b.id) DESC, COUNT(po.id) DESC, MAX(b.sent_at) DESC
+LIMIT $4`, filter.Since, filter.Until, iataFilter, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsChannelSender{}
+	for rows.Next() {
+		var item api.StatsChannelSender
+		var senderPubkey []byte
+		var channelHash []byte
+		var firstSeen, lastSeen time.Time
+		if err := rows.Scan(
+			&item.SenderName,
+			&senderPubkey,
+			&item.ChannelID,
+			&channelHash,
+			&item.ChannelName,
+			&item.MessageCount,
+			&item.ObservationCount,
+			&firstSeen,
+			&lastSeen,
+		); err != nil {
+			return nil, err
+		}
+		if len(senderPubkey) > 0 {
+			encoded := hex.EncodeToString(senderPubkey)
+			item.SenderPubkey = &encoded
+		}
+		item.ChannelHash = hex.EncodeToString(channelHash)
+		item.FirstSeen = firstSeen.UnixMilli()
+		item.LastSeen = lastSeen.UnixMilli()
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) getStatsChannelTopIATAs(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsChannelIATA, error) {
+	rows, err := s.pool.Query(ctx, `
+WITH base AS (
+  SELECT po.iata, p.channel_hash, po.packet_hash, cm.id AS message_id
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  LEFT JOIN channel_messages cm ON cm.packet_hash = po.packet_hash
+  WHERE p.channel_hash IS NOT NULL
+    AND po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+)
+SELECT
+  iata,
+  COUNT(DISTINCT channel_hash)::bigint,
+  COUNT(DISTINCT message_id)::bigint,
+  COUNT(DISTINCT packet_hash)::bigint,
+  COUNT(*)::bigint
+FROM base
+GROUP BY iata
+ORDER BY COUNT(*) DESC, iata ASC
+LIMIT 12`, filter.Since, filter.Until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []api.StatsChannelIATA{}
+	for rows.Next() {
+		var item api.StatsChannelIATA
+		if err := rows.Scan(&item.IATA, &item.ChannelCount, &item.MessageCount, &item.PacketCount, &item.ObservationCount); err != nil {
+			return nil, err
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()

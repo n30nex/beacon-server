@@ -191,6 +191,9 @@ type Reader interface {
 	// GetStatsTopology returns verified-route topology aggregates.
 	GetStatsTopology(ctx context.Context, filter StatsFilter) (*StatsTopology, error)
 
+	// GetStatsChannels returns channel activity, key-state mix, timeline, top senders, and IATA distribution.
+	GetStatsChannels(ctx context.Context, filter StatsFilter) (*StatsChannels, error)
+
 	// GetStatsRFHealth returns RF-health aggregates, telemetry series, and top offenders.
 	GetStatsRFHealth(ctx context.Context, filter StatsObserverHealthFilter) (*StatsRFHealth, error)
 

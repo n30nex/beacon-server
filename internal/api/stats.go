@@ -306,6 +306,83 @@ type StatsTopology struct {
 	BestPaths        []StatsTopologyPath      `json:"bestPaths"`
 }
 
+// StatsChannelKeyBucket summarizes channel activity by key visibility.
+type StatsChannelKeyBucket struct {
+	KeyState         string `json:"keyState"` // public, hashtag, known, or unknown
+	ChannelCount     int64  `json:"channelCount"`
+	MessageCount     int64  `json:"messageCount"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+}
+
+// StatsChannelTimelinePoint is a bucketed channel activity point.
+type StatsChannelTimelinePoint struct {
+	T                int64  `json:"t"`
+	KeyState         string `json:"keyState"`
+	MessageCount     int64  `json:"messageCount"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+}
+
+// StatsChannelRow ranks one channel or unresolved channel hash.
+type StatsChannelRow struct {
+	ChannelID        *int32  `json:"channelId,omitempty"`
+	ChannelHash      string  `json:"channelHash"`
+	Name             *string `json:"name,omitempty"`
+	KeyState         string  `json:"keyState"`
+	IsHashtag        bool    `json:"isHashtag"`
+	KeyKnown         bool    `json:"keyKnown"`
+	MessageCount     int64   `json:"messageCount"`
+	PacketCount      int64   `json:"packetCount"`
+	ObservationCount int64   `json:"observationCount"`
+	ActiveIATAs      int64   `json:"activeIatas"`
+	ActiveObservers  int64   `json:"activeObservers"`
+	LatestIATA       string  `json:"latestIata"`
+	LastSeen         int64   `json:"lastSeen"`
+}
+
+// StatsChannelSender ranks decrypted channel senders.
+type StatsChannelSender struct {
+	SenderName       string  `json:"senderName"`
+	SenderPubkey     *string `json:"senderPubkey,omitempty"`
+	ChannelID        int32   `json:"channelId"`
+	ChannelHash      string  `json:"channelHash"`
+	ChannelName      *string `json:"channelName,omitempty"`
+	MessageCount     int64   `json:"messageCount"`
+	ObservationCount int64   `json:"observationCount"`
+	FirstSeen        int64   `json:"firstSeen"`
+	LastSeen         int64   `json:"lastSeen"`
+}
+
+// StatsChannelIATA summarizes channel activity by observer IATA.
+type StatsChannelIATA struct {
+	IATA             string `json:"iata"`
+	ChannelCount     int64  `json:"channelCount"`
+	MessageCount     int64  `json:"messageCount"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+}
+
+// StatsChannels is the response envelope for /stats/channels.
+type StatsChannels struct {
+	ServerTime       int64                       `json:"serverTime"`
+	Window           StatsWindow                 `json:"window"`
+	TotalChannels    int64                       `json:"totalChannels"`
+	KnownChannels    int64                       `json:"knownChannels"`
+	UnknownChannels  int64                       `json:"unknownChannels"`
+	HashtagChannels  int64                       `json:"hashtagChannels"`
+	PublicChannels   int64                       `json:"publicChannels"`
+	MessageCount     int64                       `json:"messageCount"`
+	PacketCount      int64                       `json:"packetCount"`
+	ObservationCount int64                       `json:"observationCount"`
+	ActiveIATAs      int64                       `json:"activeIatas"`
+	KeyMix           []StatsChannelKeyBucket     `json:"keyMix"`
+	Timeline         []StatsChannelTimelinePoint `json:"timeline"`
+	TopChannels      []StatsChannelRow           `json:"topChannels"`
+	TopSenders       []StatsChannelSender        `json:"topSenders"`
+	TopIATAs         []StatsChannelIATA          `json:"topIatas"`
+}
+
 // StatsObserverHealthFlags exposes the operator-health classification for one observer.
 type StatsObserverHealthFlags struct {
 	Stale         bool `json:"stale"`
