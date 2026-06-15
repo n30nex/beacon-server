@@ -889,12 +889,12 @@ func (s *Store) fillObserverCompareMix(ctx context.Context, filter api.StatsObse
 SELECT po.observer_id, p.payload_type, COUNT(*)::bigint
 FROM packet_observations po
 JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.observer_id = ANY(string_to_array($5::text, ',')::uuid[])
+WHERE po.observer_id = ANY(string_to_array($4::text, ',')::uuid[])
   AND po.heard_at >= $1
   AND po.heard_at <= $2
   AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
 GROUP BY po.observer_id, p.payload_type
-ORDER BY po.observer_id, COUNT(*) DESC, p.payload_type ASC`, filter.Since, filter.Until, iataFilter, filter.Limit, observerIDs)
+ORDER BY po.observer_id, COUNT(*) DESC, p.payload_type ASC`, filter.Since, filter.Until, iataFilter, observerIDs)
 	if err != nil {
 		return err
 	}
@@ -919,12 +919,12 @@ ORDER BY po.observer_id, COUNT(*) DESC, p.payload_type ASC`, filter.Since, filte
 SELECT po.observer_id, p.route_type, COUNT(*)::bigint
 FROM packet_observations po
 JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.observer_id = ANY(string_to_array($5::text, ',')::uuid[])
+WHERE po.observer_id = ANY(string_to_array($4::text, ',')::uuid[])
   AND po.heard_at >= $1
   AND po.heard_at <= $2
   AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
 GROUP BY po.observer_id, p.route_type
-ORDER BY po.observer_id, COUNT(*) DESC, p.route_type ASC`, filter.Since, filter.Until, iataFilter, filter.Limit, observerIDs)
+ORDER BY po.observer_id, COUNT(*) DESC, p.route_type ASC`, filter.Since, filter.Until, iataFilter, observerIDs)
 	if err != nil {
 		return err
 	}
