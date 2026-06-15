@@ -196,6 +196,10 @@ func (stubReader) ListKnownRoutes(ctx context.Context, iata string, hopCount int
 	return nil, nil
 }
 
+func (stubReader) GetKnownRoute(ctx context.Context, routeID int64) (*api.KnownRoute, error) {
+	return nil, nil
+}
+
 func (stubReader) SearchKnownRoutes(ctx context.Context, iata, fromHash, toHash string) ([]api.KnownRoute, error) {
 	return nil, nil
 }

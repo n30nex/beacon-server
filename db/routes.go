@@ -45,6 +45,26 @@ func (s *Store) ListKnownRoutes(ctx context.Context, iata string, hopCount int32
 	return toKnownRoutes(rows, nodes), nil
 }
 
+func (s *Store) GetKnownRoute(ctx context.Context, routeID int64) (*api.KnownRoute, error) {
+	rows, err := s.queryKnownRoutes(ctx, `
+		SELECT id, node_ids, hash_prefix, iata, hop_count, first_seen, last_seen, observation_count
+		FROM known_routes
+		WHERE id = $1
+	`, routeID)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := s.GetNodesByIDs(ctx, collectNodeIDs(rows))
+	if err != nil {
+		return nil, err
+	}
+	routes := toKnownRoutes(rows, nodes)
+	if len(routes) == 0 {
+		return nil, nil
+	}
+	return &routes[0], nil
+}
+
 func (s *Store) SearchKnownRoutes(ctx context.Context, iata, fromHash, toHash string) ([]api.KnownRoute, error) {
 	fromBytes, err := hex.DecodeString(fromHash)
 	if err != nil {
@@ -109,10 +129,13 @@ func (s *Store) SearchKnownRoutes(ctx context.Context, iata, fromHash, toHash st
 }
 
 func (s *Store) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]api.KnownRoute, error) {
-	rows, err := s.q.GetKnownRoutesByNode(ctx, sqlc.GetKnownRoutesByNodeParams{
-		Iata:    iata,
-		Column2: nodeID,
-	})
+	rows, err := s.queryKnownRoutes(ctx, `
+		SELECT id, node_ids, hash_prefix, iata, hop_count, first_seen, last_seen, observation_count
+		FROM known_routes
+		WHERE ($1 = '' OR iata = $1)
+		  AND $2::uuid = ANY(node_ids)
+		ORDER BY hop_count ASC, last_seen DESC
+	`, iata, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +145,36 @@ func (s *Store) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uu
 		return nil, err
 	}
 	return toKnownRoutes(rows, nodes), nil
+}
+
+func (s *Store) queryKnownRoutes(ctx context.Context, query string, args ...any) ([]sqlc.KnownRoute, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []sqlc.KnownRoute{}
+	for rows.Next() {
+		var row sqlc.KnownRoute
+		if err := rows.Scan(
+			&row.ID,
+			&row.NodeIds,
+			&row.HashPrefix,
+			&row.Iata,
+			&row.HopCount,
+			&row.FirstSeen,
+			&row.LastSeen,
+			&row.ObservationCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *Store) GetCrossIATANeighbors(ctx context.Context, nodeID uuid.UUID, iata string) ([]api.NodeNeighbor, error) {

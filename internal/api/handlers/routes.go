@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // RoutesRouter mounts all /routes routes onto a subrouter.
@@ -22,6 +24,7 @@ func RoutesRouter(reader api.Reader) http.Handler {
 	r.Get("/", listKnownRoutes(reader))
 	r.Get("/cross", searchCrossIATARoutes(reader))
 	r.Get("/search", searchKnownRoutes(reader))
+	r.Get("/{routeID}", getKnownRoute(reader))
 	return r
 }
 
@@ -64,6 +67,41 @@ func listKnownRoutes(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, routes)
+	}
+}
+
+// getKnownRoute godoc
+//
+//	@Summary	Get a known route
+//	@Tags		Routes
+//	@Produce	json
+//	@Param		routeID	path		int	true	"Known route ID"
+//	@Success	200		{object}	api.KnownRoute
+//	@Failure	400		{object}	handlers.APIError
+//	@Failure	404		{object}	handlers.APIError
+//	@Failure	500		{object}	handlers.APIError
+//	@Router		/routes/{routeID} [get]
+func getKnownRoute(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		routeID, err := strconv.ParseInt(chi.URLParam(r, "routeID"), 10, 64)
+		if err != nil || routeID <= 0 {
+			respondError(w, http.StatusBadRequest, "invalid route ID")
+			return
+		}
+		route, err := reader.GetKnownRoute(r.Context(), routeID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				respondError(w, http.StatusNotFound, "route not found")
+				return
+			}
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if route == nil {
+			respondError(w, http.StatusNotFound, "route not found")
+			return
+		}
+		respond(w, http.StatusOK, route)
 	}
 }
 

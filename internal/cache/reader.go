@@ -537,6 +537,11 @@ func (cr *CachedReader) ListKnownRoutes(ctx context.Context, iata string, hopCou
 	return cr.inner.ListKnownRoutes(ctx, iata, hopCount, cursor, limit)
 }
 
+// GetKnownRoute implements [api.Reader].
+func (cr *CachedReader) GetKnownRoute(ctx context.Context, routeID int64) (*api.KnownRoute, error) {
+	return cr.inner.GetKnownRoute(ctx, routeID)
+}
+
 // SearchKnownRoutes implements [api.Reader].
 func (cr *CachedReader) SearchKnownRoutes(ctx context.Context, iata, fromHash, toHash string) ([]api.KnownRoute, error) {
 	return cr.inner.SearchKnownRoutes(ctx, iata, fromHash, toHash)

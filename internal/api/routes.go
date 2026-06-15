@@ -24,6 +24,35 @@ type KnownRoute struct {
 	ObservationCount int64      `json:"observationCount"`
 }
 
+// RouteNeighborhoodNode is a map-ready node included in a verified route neighborhood.
+type RouteNeighborhoodNode struct {
+	ID          uuid.UUID `json:"id"`
+	Name        *string   `json:"name,omitempty"`
+	PublicKey   string    `json:"publicKey"`
+	Latitude    float64   `json:"lat"`
+	Longitude   float64   `json:"lng"`
+	HopDistance int32     `json:"hopDistance"`
+}
+
+// RouteNeighborhoodEdge is an adjacent-node link observed in one or more fully resolved known routes.
+type RouteNeighborhoodEdge struct {
+	FromNodeID       uuid.UUID `json:"fromNodeId"`
+	ToNodeID         uuid.UUID `json:"toNodeId"`
+	IATA             string    `json:"iata"`
+	RouteIDs         []int64   `json:"routeIds"`
+	HopDistance      int32     `json:"hopDistance"`
+	LastSeen         int64     `json:"lastSeen"`
+	ObservationCount int64     `json:"observationCount"`
+}
+
+// NodeRouteNeighborhood is a verified local route graph around a selected node.
+type NodeRouteNeighborhood struct {
+	NodeID  uuid.UUID               `json:"nodeId"`
+	MaxHops int32                   `json:"maxHops"`
+	Nodes   []RouteNeighborhoodNode `json:"nodes"`
+	Edges   []RouteNeighborhoodEdge `json:"edges"`
+}
+
 // CrossIATAHop represents the boundary hop between two IATAs in a cross-IATA route.
 type CrossIATAHop struct {
 	FromNode ResolvedNode `json:"fromNode"` // last node in source IATA
