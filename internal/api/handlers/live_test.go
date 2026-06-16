@@ -17,9 +17,21 @@ type liveRegionLookupReader struct {
 	called bool
 }
 
+type liveBackfillCaptureReader struct {
+	stubReader
+	filter api.LiveBackfillFilter
+	called bool
+}
+
 func (r *liveRegionLookupReader) GetRegionBySlug(ctx context.Context, slug string) (*api.Region, error) {
 	r.called = true
 	return nil, nil
+}
+
+func (r *liveBackfillCaptureReader) ListLiveBackfill(ctx context.Context, filter api.LiveBackfillFilter) (api.Page[api.LivePacketObservation], error) {
+	r.called = true
+	r.filter = filter
+	return api.Page[api.LivePacketObservation]{}, nil
 }
 
 func TestListLiveBackfill_MissingAfterID(t *testing.T) {
@@ -43,6 +55,28 @@ func TestListLiveBackfill_InvalidRouteType(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestListLiveBackfill_ZeroCursorSeedsLatest(t *testing.T) {
+	reader := &liveBackfillCaptureReader{}
+	r := LiveRouter(reader)
+	req := httptest.NewRequest(http.MethodGet, "/backfill?afterObservationId=0&limit=12", nil)
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !reader.called {
+		t.Fatal("expected reader to be called")
+	}
+	if reader.filter.AfterObservationID != 0 {
+		t.Fatalf("expected cursor 0, got %d", reader.filter.AfterObservationID)
+	}
+	if reader.filter.Limit != 12 {
+		t.Fatalf("expected limit 12, got %d", reader.filter.Limit)
 	}
 }
 

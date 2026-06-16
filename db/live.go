@@ -36,7 +36,7 @@ func (s *Store) ListLiveBackfill(ctx context.Context, filter api.LiveBackfillFil
 		limit = 250
 	}
 	iataFilter := strings.Join(filter.IATAs, ",")
-	rows, err := s.pool.Query(ctx, `
+	const liveBackfillSelect = `
 SELECT
   po.id,
   encode(p.packet_hash, 'hex') AS packet_hash,
@@ -63,13 +63,26 @@ FROM packet_observations po
 JOIN packets p ON p.packet_hash = po.packet_hash
 LEFT JOIN observers o ON o.id = po.observer_id
 LEFT JOIN transport_scopes ts ON ts.id = p.scope_id
-WHERE po.id > $1
-  AND ($2::smallint = -1 OR p.payload_type = $2::smallint)
+WHERE ($2::smallint = -1 OR p.payload_type = $2::smallint)
   AND ($3::smallint = -1 OR p.route_type = $3::smallint)
   AND ($4::text = '' OR po.iata = ANY(string_to_array($4::text, ',')))
-  AND ($5::text = '' OR ts.name = $5::text)
+  AND ($5::text = '' OR ts.name = $5::text)`
+	query := liveBackfillSelect + `
+  AND po.id > $1
 ORDER BY po.id ASC
-LIMIT $6`, filter.AfterObservationID, filter.PayloadType, filter.RouteType, iataFilter, filter.Scope, limit+1)
+LIMIT $6`
+	if filter.AfterObservationID <= 0 {
+		// Initial Live page load has no cursor yet. Seed from the newest durable
+		// observations, then restore ascending order so the client can animate them
+		// naturally and advance its high-water mark.
+		query = `SELECT * FROM (` + liveBackfillSelect + `
+  AND $1::bigint <= 0
+ORDER BY po.id DESC
+LIMIT $6
+) recent_live_observations
+ORDER BY id ASC`
+	}
+	rows, err := s.pool.Query(ctx, query, filter.AfterObservationID, filter.PayloadType, filter.RouteType, iataFilter, filter.Scope, limit+1)
 	if err != nil {
 		return api.Page[api.LivePacketObservation]{}, err
 	}
