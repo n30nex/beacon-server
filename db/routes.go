@@ -6,12 +6,12 @@ package db
 import (
 	"context"
 	"encoding/hex"
+	"strings"
 	"time"
 
 	sqlc "github.com/MeshCore-Beacon/beacon-server/db/sqlc"
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Store) UpsertKnownRoute(ctx context.Context, nodeIDs []uuid.UUID, hashPrefix [][]byte, iata string, hopCount int32) error {
@@ -23,17 +23,16 @@ func (s *Store) UpsertKnownRoute(ctx context.Context, nodeIDs []uuid.UUID, hashP
 	})
 }
 
-func (s *Store) ListKnownRoutes(ctx context.Context, iata string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
-	var cursorTS pgtype.Timestamptz
-	if !cursor.IsZero() {
-		cursorTS = pgtype.Timestamptz{Time: cursor, Valid: true}
-	}
-	rows, err := s.q.ListKnownRoutes(ctx, sqlc.ListKnownRoutesParams{
-		Column1: iata,
-		Column2: hopCount,
-		Column3: cursorTS,
-		Limit:   limit,
-	})
+func (s *Store) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
+	rows, err := s.queryKnownRoutes(ctx, `
+		SELECT id, node_ids, hash_prefix, iata, hop_count, first_seen, last_seen, observation_count
+		FROM known_routes
+		WHERE ($1::text = '' OR iata = ANY(string_to_array($1::text, ',')))
+		  AND ($2::int = 0 OR hop_count = $2)
+		  AND ($3::timestamptz IS NULL OR last_seen < $3)
+		ORDER BY last_seen DESC
+		LIMIT $4
+	`, strings.Join(iatas, ","), hopCount, nullableTime(cursor), limit)
 	if err != nil {
 		return nil, err
 	}

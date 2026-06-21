@@ -15,6 +15,7 @@ import (
 // AtlasRouter mounts the regional Atlas endpoints.
 func AtlasRouter(reader api.Reader) http.Handler {
 	r := chi.NewRouter()
+	r.Get("/briefing", getAtlasBriefing(reader))
 	r.Get("/regions/{slug}", getAtlasRegion(reader))
 	r.Get("/replay", listAtlasReplay(reader))
 	return r
@@ -30,6 +31,47 @@ func parseEpochMillisParam(r *http.Request, name string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return time.UnixMilli(ms), nil
+}
+
+// getAtlasBriefing godoc
+//
+//	@Summary	Get Atlas operator briefing
+//	@Tags		Atlas
+//	@Produce	json
+//	@Param		region	query		string	false	"Region slug, defaults to all"
+//	@Param		since	query		int		false	"Window start as epoch milliseconds"
+//	@Param		until	query		int		false	"Window end as epoch milliseconds"
+//	@Success	200		{object}	api.AtlasBriefing
+//	@Failure	400		{object}	handlers.APIError
+//	@Failure	404		{object}	handlers.APIError
+//	@Router		/atlas/briefing [get]
+func getAtlasBriefing(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since, err := parseEpochMillisParam(r, "since")
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "since must be epoch milliseconds")
+			return
+		}
+		until, err := parseEpochMillisParam(r, "until")
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "until must be epoch milliseconds")
+			return
+		}
+		if !since.IsZero() && !until.IsZero() && since.After(until) {
+			respondError(w, http.StatusBadRequest, "since must be before until")
+			return
+		}
+		region := r.URL.Query().Get("region")
+		if region == "" {
+			region = "all"
+		}
+		briefing, err := reader.GetAtlasBriefing(r.Context(), region, since, until)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "atlas briefing not found")
+			return
+		}
+		respond(w, http.StatusOK, briefing)
+	}
 }
 
 // getAtlasRegion godoc

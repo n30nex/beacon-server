@@ -20,6 +20,9 @@ type atlasReader struct {
 	summarySlug  string
 	summarySince time.Time
 	summaryUntil time.Time
+	briefRegion  string
+	briefSince   time.Time
+	briefUntil   time.Time
 	replayRegion string
 	replayCursor int64
 	replayLimit  int32
@@ -35,6 +38,23 @@ func (r *atlasReader) GetRegionAtlasSummary(ctx context.Context, slug string, si
 			IATAs:         []string{"YVR", "YYJ"},
 		},
 		Window: api.AtlasWindow{Since: since.UnixMilli(), Until: until.UnixMilli()},
+	}, nil
+}
+
+func (r *atlasReader) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
+	r.briefRegion = regionSlug
+	r.briefSince = since
+	r.briefUntil = until
+	return &api.AtlasBriefing{
+		Region: api.Region{
+			RegionSummary: api.RegionSummary{ID: 0, Slug: regionSlug, Name: "All Regions"},
+			IATAs:         []string{"YVR", "YYZ"},
+		},
+		Window: api.AtlasWindow{Since: since.UnixMilli(), Until: until.UnixMilli()},
+		Health: api.AtlasBriefingHealth{
+			Status:      "ok",
+			HealthScore: 92,
+		},
 	}, nil
 }
 
@@ -82,6 +102,46 @@ func TestGetAtlasRegion_ParsesWindow(t *testing.T) {
 	}
 	if body.Region.Slug != "western-canada" || len(body.Region.IATAs) != 2 {
 		t.Fatalf("unexpected summary body: %+v", body.Region)
+	}
+}
+
+func TestGetAtlasBriefing_DefaultsAndParsesWindow(t *testing.T) {
+	reader := &atlasReader{}
+	r := chi.NewRouter()
+	r.Mount("/atlas", AtlasRouter(reader))
+	req := httptest.NewRequest(http.MethodGet, "/atlas/briefing?since=1710000000000&until=1710003600000", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if reader.briefRegion != "all" {
+		t.Fatalf("expected default all region, got %q", reader.briefRegion)
+	}
+	if reader.briefSince.UnixMilli() != 1710000000000 || reader.briefUntil.UnixMilli() != 1710003600000 {
+		t.Fatalf("unexpected parsed window: %d..%d", reader.briefSince.UnixMilli(), reader.briefUntil.UnixMilli())
+	}
+	var body api.AtlasBriefing
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Region.Slug != "all" || body.Health.Status != "ok" {
+		t.Fatalf("unexpected briefing body: %+v", body)
+	}
+}
+
+func TestGetAtlasBriefing_RejectsInvalidWindow(t *testing.T) {
+	r := chi.NewRouter()
+	r.Mount("/atlas", AtlasRouter(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/atlas/briefing?since=1710003600000&until=1710000000000", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 

@@ -361,7 +361,11 @@ func (c *searchCollector) addRoutes(ctx context.Context, reader api.Reader, iata
 		targetIATAs = []string{""}
 	}
 	for _, iata := range targetIATAs[:min(len(targetIATAs), 8)] {
-		routes, err := reader.ListKnownRoutes(ctx, iata, 0, time.Time{}, min32(int32(c.limit*3), 120))
+		var iatas []string
+		if iata != "" {
+			iatas = []string{iata}
+		}
+		routes, err := reader.ListKnownRoutes(ctx, iatas, 0, time.Time{}, min32(int32(c.limit*3), 120))
 		if err != nil {
 			continue
 		}

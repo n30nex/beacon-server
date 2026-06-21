@@ -37,7 +37,7 @@ func (r searchReader) ListChannels(ctx context.Context, limit int32, hash []byte
 	return api.Page[api.ChannelSummary]{Items: r.channels}, nil
 }
 
-func (r searchReader) ListKnownRoutes(ctx context.Context, iata string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
+func (r searchReader) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
 	return r.routes, nil
 }
 

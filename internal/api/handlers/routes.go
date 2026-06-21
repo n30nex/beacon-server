@@ -34,6 +34,9 @@ func RoutesRouter(reader api.Reader) http.Handler {
 //	@Tags		Routes
 //	@Produce	json
 //	@Param		iata		query		string	false	"Filter by IATA code"
+//	@Param		iatas		query		string	false	"Filter by IATA code(s), comma-separated"
+//	@Param		region		query		string	false	"Filter by region slug"
+//	@Param		regionId	query		int		false	"Filter by region ID"
 //	@Param		hopCount	query		int		false	"Filter by exact hop count"
 //	@Param		cursor		query		int		false	"Epoch ms timestamp of last item for pagination"
 //	@Param		limit		query		int		false	"Max results (default 50)"
@@ -42,7 +45,15 @@ func RoutesRouter(reader api.Reader) http.Handler {
 //	@Router		/routes [get]
 func listKnownRoutes(reader api.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		iata := r.URL.Query().Get("iata")
+		iatas := parseIATAs(r)
+		if regionIDStr := r.URL.Query().Get("regionId"); regionIDStr != "" || r.URL.Query().Get("region") != "" {
+			regionIATAs, err := resolveRegionIATAs(r.Context(), regionIDStr, r.URL.Query().Get("region"), reader)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			iatas = append(iatas, regionIATAs...)
+		}
 		var hopCount int32
 		if v := r.URL.Query().Get("hopCount"); v != "" {
 			if h, err := strconv.ParseInt(v, 10, 32); err == nil {
@@ -61,7 +72,7 @@ func listKnownRoutes(reader api.Reader) http.HandlerFunc {
 				limit = int32(l)
 			}
 		}
-		routes, err := reader.ListKnownRoutes(r.Context(), iata, hopCount, cursor, limit)
+		routes, err := reader.ListKnownRoutes(r.Context(), iatas, hopCount, cursor, limit)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "internal server error")
 			return

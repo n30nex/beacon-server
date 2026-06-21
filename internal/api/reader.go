@@ -46,6 +46,9 @@ type Reader interface {
 	// regional story view for a named region or the special "all" slug.
 	GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*RegionAtlasSummary, error)
 
+	// GetAtlasBriefing returns the prepared command-board payload for Atlas.
+	GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*AtlasBriefing, error)
+
 	// ListAtlasReplay returns paginated packets enriched with map-ready path
 	// points for Atlas playback.
 	ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (Page[AtlasReplayPacket], error)
@@ -103,6 +106,9 @@ type Reader interface {
 	// ListObserverAdverts returns a paginated list of advert packets heard by an observer.
 	// Pass cursor=0 to start from the beginning.
 	ListObserverAdverts(ctx context.Context, observerID uuid.UUID, cursor int64, limit int32) (Page[AdvertObservation], error)
+
+	// GetObserverTopology returns prepared topology/activity aggregates for one observer.
+	GetObserverTopology(ctx context.Context, observerID uuid.UUID, filter StatsFilter) (*ObserverTopologySummary, error)
 
 	// ListNodes returns a paginated list of nodes with optional filters.
 	// Pass 0 for nodeType, nil iatas, nil for pubkey to skip those filters.
@@ -229,11 +235,11 @@ type Reader interface {
 	// ListTraceTags returns a paginated list of trace tags with aggregate metadata.
 	ListTraceTags(ctx context.Context, iatas []string, scope, traceType string, since, until time.Time, cursor time.Time, limit int32) ([]TraceTagSummary, error)
 
-	// GetTraceByTag returns all packets for a given trace tag with resolved routes.
-	GetTraceByTag(ctx context.Context, tag string) (*TraceDetail, error)
+	// GetTraceByTag returns packets for a given trace tag with resolved routes and optional filters.
+	GetTraceByTag(ctx context.Context, tag string, iatas []string, scope string, since, until time.Time) (*TraceDetail, error)
 
-	// ListKnownRoutes returns known routes filtered by IATA and optional hop count.
-	ListKnownRoutes(ctx context.Context, iata string, hopCount int32, cursor time.Time, limit int32) ([]KnownRoute, error)
+	// ListKnownRoutes returns known routes filtered by IATA(s) and optional hop count.
+	ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]KnownRoute, error)
 
 	// GetKnownRoute returns one fully resolved known route by id.
 	GetKnownRoute(ctx context.Context, routeID int64) (*KnownRoute, error)

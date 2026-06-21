@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -90,7 +92,7 @@ func (s *Store) GetRegionAtlasSummary(ctx context.Context, slug string, since, u
 	if err != nil {
 		return nil, err
 	}
-	scopes, err := s.GetScopesByIATAs(ctx, iatas)
+	scopes, err := s.getAtlasScopeSummaries(ctx, len(iatas))
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +112,215 @@ func (s *Store) GetRegionAtlasSummary(ctx context.Context, slug string, since, u
 	}
 	summary.StoryBeats = atlasStoryBeats(summary)
 	return summary, nil
+}
+
+func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
+	since, until = atlasWindow(since, until)
+	if regionSlug == "" {
+		regionSlug = "all"
+	}
+	region, iatas, err := s.atlasRegion(ctx, regionSlug)
+	if err != nil {
+		return nil, err
+	}
+	iataFilter := strings.Join(iatas, ",")
+	allIATARows, err := s.getAtlasIATAs(ctx, since, until, "")
+	if err != nil {
+		return nil, err
+	}
+	iataRows := atlasFilterIATAs(allIATARows, iatas)
+	kpis := atlasKPIsFromIATAs(iataRows, since, until)
+	payload, err := s.getAtlasPayloadMix(ctx, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	topNodes, err := s.getAtlasTopNodes(ctx, since, until, iataFilter, 8)
+	if err != nil {
+		return nil, err
+	}
+	topObservers, err := s.getAtlasTopObservers(ctx, since, until, iataFilter, 8)
+	if err != nil {
+		return nil, err
+	}
+	scopes, err := s.getAtlasScopeSummaries(ctx, len(iatas))
+	if err != nil {
+		return nil, err
+	}
+	summary := &api.RegionAtlasSummary{
+		Region:       *region,
+		Window:       api.AtlasWindow{Since: since.UnixMilli(), Until: until.UnixMilli()},
+		KPIs:         kpis,
+		IATAs:        iataRows,
+		PayloadMix:   payload,
+		TopNodes:     topNodes,
+		TopObservers: topObservers,
+		Scopes:       scopes,
+	}
+
+	health, err := s.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
+		StatsFilter: api.StatsFilter{
+			IATAs: iatas,
+			Since: since,
+			Until: until,
+			Limit: 500,
+		},
+		StaleAfter: statsDefaultStaleAfter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	routeMix, err := s.getAtlasRouteMix(ctx, since, until, iataFilter)
+	if err != nil {
+		return nil, err
+	}
+	notableRoutes, err := s.getAtlasNotableRoutes(ctx, iatas)
+	if err != nil {
+		return nil, err
+	}
+	previousIATARows, err := s.getAtlasIATAs(ctx, since.Add(-until.Sub(since)), since, "")
+	if err != nil {
+		return nil, err
+	}
+	regions, err := s.getAtlasBriefingRegions(ctx, since, until, allIATARows, previousIATARows)
+	if err != nil {
+		return nil, err
+	}
+
+	hotspots := atlasBriefingHotspots(summary.IATAs)
+	degradedObservers := atlasDegradedObservers(health.Items, 8)
+	briefingHealth := atlasBriefingHealth(summary.KPIs, health.Summary)
+	priorities := atlasBriefingPriorities(summary, briefingHealth, health.Summary, regions, hotspots, notableRoutes, degradedObservers)
+
+	return &api.AtlasBriefing{
+		ServerTime:        time.Now().UnixMilli(),
+		Region:            summary.Region,
+		Window:            summary.Window,
+		Health:            briefingHealth,
+		Regions:           regions,
+		Priorities:        priorities,
+		Hotspots:          hotspots,
+		DegradedObservers: degradedObservers,
+		NotableRoutes:     notableRoutes,
+		TopNodes:          summary.TopNodes,
+		TopObservers:      summary.TopObservers,
+		PayloadMix:        summary.PayloadMix,
+		RouteMix:          routeMix,
+		Scopes:            summary.Scopes,
+	}, nil
+}
+
+func (s *Store) getAtlasBriefingRegions(ctx context.Context, since, until time.Time, currentRows, previousRows []api.AtlasIATA) ([]api.AtlasBriefingRegion, error) {
+	slugs := []string{"all", "western-canada", "eastern-canada"}
+	rows := make([]api.AtlasBriefingRegion, 0, len(slugs))
+	activeNodesByIATA, err := s.getAtlasActiveNodesByIATA(ctx, since, until)
+	if err != nil {
+		return nil, err
+	}
+	routeCountsByIATA, err := s.getAtlasRouteCountsByIATA(ctx, since, until)
+	if err != nil {
+		return nil, err
+	}
+	for _, slug := range slugs {
+		region, iatas, err := s.atlasRegion(ctx, slug)
+		if err != nil {
+			if slug == "all" {
+				return nil, err
+			}
+			continue
+		}
+		iataRows := atlasFilterIATAs(currentRows, iatas)
+		prevRows := atlasFilterIATAs(previousRows, iatas)
+		kpis := atlasKPIsFromIATAs(iataRows, since, until)
+		prevKPIs := atlasKPIsFromIATAs(prevRows, since.Add(-until.Sub(since)), since)
+		activeNodes := atlasSumByIATA(activeNodesByIATA, iatas)
+		routeCount := atlasSumByIATA(routeCountsByIATA, iatas)
+		topIATA := ""
+		if len(iataRows) > 0 {
+			topIATA = iataRows[0].IATA
+		}
+		rows = append(rows, api.AtlasBriefingRegion{
+			Slug:                region.Slug,
+			Name:                region.Name,
+			IATACount:           len(region.IATAs),
+			PacketCount:         kpis.TotalPackets,
+			ObservationCount:    kpis.TotalObservations,
+			ActiveObservers:     kpis.ActiveObservers,
+			ActiveIATAs:         kpis.ActiveIATAs,
+			ActiveNodes:         activeNodes,
+			RouteCount:          routeCount,
+			ObservationDeltaPct: atlasDeltaPct(kpis.TotalObservations, prevKPIs.TotalObservations),
+			TopIATA:             topIATA,
+			HealthScore:         atlasRegionHealthScore(kpis, activeNodes, routeCount),
+			URL:                 atlasBriefingURL("Stats", region.Slug, "", map[string]string{"statsTab": "regions", "range": "24h"}),
+		})
+	}
+	return rows, nil
+}
+
+func (s *Store) getAtlasScopeSummaries(ctx context.Context, iataCount int) ([]api.ScopeSummary, error) {
+	stats, err := s.GetScopeStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]api.ScopeSummary, 0, len(stats))
+	for _, scope := range stats {
+		items = append(items, api.ScopeSummary{
+			Name:          scope.Name,
+			ObserverCount: scope.ObserverCount,
+			NodeCount:     scope.NodeCount,
+			IATACount:     int64(iataCount),
+		})
+	}
+	return items, nil
+}
+
+func atlasFilterIATAs(rows []api.AtlasIATA, iatas []string) []api.AtlasIATA {
+	if len(iatas) == 0 {
+		return rows
+	}
+	allowed := make(map[string]struct{}, len(iatas))
+	for _, iata := range iatas {
+		allowed[iata] = struct{}{}
+	}
+	filtered := make([]api.AtlasIATA, 0, len(iatas))
+	for _, row := range rows {
+		if _, ok := allowed[row.IATA]; ok {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func atlasKPIsFromIATAs(rows []api.AtlasIATA, since, until time.Time) api.StatsOverview {
+	var out api.StatsOverview
+	for _, row := range rows {
+		out.TotalPackets += row.UniquePackets
+		out.TotalObservations += row.ObservationCount
+		out.ActiveObservers += row.ActiveObservers
+		if row.ObservationCount > 0 {
+			out.ActiveIATAs++
+		}
+	}
+	out.WindowHours = int(until.Sub(since).Hours())
+	if out.WindowHours < 1 {
+		out.WindowHours = 1
+	}
+	return out
+}
+
+func atlasSumByIATA(values map[string]int64, iatas []string) int64 {
+	if len(iatas) == 0 {
+		var total int64
+		for _, value := range values {
+			total += value
+		}
+		return total
+	}
+	var total int64
+	for _, iata := range iatas {
+		total += values[iata]
+	}
+	return total
 }
 
 func (s *Store) getAtlasKPIs(ctx context.Context, since, until time.Time, iatas string) (*api.StatsOverview, error) {
@@ -223,6 +434,114 @@ ORDER BY count DESC`
 		}
 		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
 		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) getAtlasRouteMix(ctx context.Context, since, until time.Time, iatas string) ([]api.LiveRouteMixItem, error) {
+	const q = `
+SELECT p.route_type, COUNT(*)::bigint AS count
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+GROUP BY p.route_type
+ORDER BY count DESC, p.route_type
+LIMIT 8`
+	rows, err := s.pool.Query(ctx, q, since, until, iatas)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []api.LiveRouteMixItem{}
+	for rows.Next() {
+		var item api.LiveRouteMixItem
+		if err := rows.Scan(&item.RouteType, &item.Count); err != nil {
+			return nil, err
+		}
+		item.RouteTypeName = api.RouteTypeName(item.RouteType)
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) getAtlasActiveNodes(ctx context.Context, since, until time.Time, iatas string) (int64, error) {
+	const q = `
+SELECT COUNT(DISTINCT n.id)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))`
+	var count int64
+	if err := s.pool.QueryRow(ctx, q, since, until, iatas).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) getAtlasRouteCount(ctx context.Context, since, until time.Time, iatas string) (int64, error) {
+	const q = `
+SELECT COUNT(*)::bigint
+FROM known_routes kr
+WHERE kr.last_seen >= $1
+  AND kr.last_seen <= $2
+  AND ($3::text = '' OR kr.iata = ANY(string_to_array($3::text, ',')))`
+	var count int64
+	if err := s.pool.QueryRow(ctx, q, since, until, iatas).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) getAtlasActiveNodesByIATA(ctx context.Context, since, until time.Time) (map[string]int64, error) {
+	const q = `
+SELECT po.iata, COUNT(DISTINCT n.id)::bigint
+FROM packet_observations po
+JOIN packets p ON p.packet_hash = po.packet_hash
+JOIN nodes n ON n.public_key = p.origin_pubkey
+WHERE po.heard_at >= $1
+  AND po.heard_at <= $2
+GROUP BY po.iata`
+	rows, err := s.pool.Query(ctx, q, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]int64{}
+	for rows.Next() {
+		var iata string
+		var count int64
+		if err := rows.Scan(&iata, &count); err != nil {
+			return nil, err
+		}
+		result[iata] = count
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) getAtlasRouteCountsByIATA(ctx context.Context, since, until time.Time) (map[string]int64, error) {
+	const q = `
+SELECT kr.iata, COUNT(*)::bigint
+FROM known_routes kr
+WHERE kr.last_seen >= $1
+  AND kr.last_seen <= $2
+GROUP BY kr.iata`
+	rows, err := s.pool.Query(ctx, q, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]int64{}
+	for rows.Next() {
+		var iata string
+		var count int64
+		if err := rows.Scan(&iata, &count); err != nil {
+			return nil, err
+		}
+		result[iata] = count
 	}
 	return result, rows.Err()
 }
@@ -360,6 +679,384 @@ func atlasStoryBeats(summary *api.RegionAtlasSummary) []api.AtlasStoryBeat {
 		})
 	}
 	return beats
+}
+
+func (s *Store) getAtlasNotableRoutes(ctx context.Context, iatas []string) ([]api.AtlasNotableRoute, error) {
+	routes, err := s.ListKnownRoutes(ctx, iatas, 0, time.Time{}, 8)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]api.AtlasNotableRoute, 0, len(routes))
+	for _, route := range routes {
+		items = append(items, api.AtlasNotableRoute{
+			RouteID:          route.ID,
+			IATA:             route.IATA,
+			HopCount:         route.HopCount,
+			NodeNames:        atlasRouteNodeNames(route.Hops),
+			ObservationCount: route.ObservationCount,
+			LastSeen:         route.LastSeen,
+			URL:              atlasBriefingURL("Map", "", "", map[string]string{"routeId": fmt.Sprintf("%d", route.ID), "routeReplay": "1"}),
+		})
+	}
+	return items, nil
+}
+
+func atlasRouteNodeNames(hops []api.RouteHop) []string {
+	names := make([]string, 0, len(hops))
+	for _, hop := range hops {
+		if hop.Node != nil && hop.Node.Name != nil && *hop.Node.Name != "" {
+			names = append(names, *hop.Node.Name)
+			continue
+		}
+		if hop.HashBytes != "" {
+			names = append(names, strings.ToUpper(hop.HashBytes))
+			continue
+		}
+		names = append(names, hop.NodeID.String()[:8])
+	}
+	return names
+}
+
+func atlasBriefingHotspots(iatas []api.AtlasIATA) []api.AtlasHotspot {
+	limit := len(iatas)
+	if limit > 8 {
+		limit = 8
+	}
+	items := make([]api.AtlasHotspot, 0, limit)
+	for _, row := range iatas[:limit] {
+		items = append(items, api.AtlasHotspot{
+			IATA:             row.IATA,
+			DisplayName:      row.DisplayName,
+			Lat:              row.Lat,
+			Lng:              row.Lng,
+			ObservationCount: row.ObservationCount,
+			UniquePackets:    row.UniquePackets,
+			ActiveObservers:  row.ActiveObservers,
+			URL:              atlasBriefingURL("Live", "", row.IATA, nil),
+		})
+	}
+	return items
+}
+
+func atlasDegradedObservers(items []api.StatsObserverHealth, limit int) []api.StatsObserverHealth {
+	out := make([]api.StatsObserverHealth, 0, limit)
+	for _, item := range items {
+		if !(item.Flags.Stale || item.Flags.LowBattery || item.Flags.HighNoise || item.Flags.HighAirtime || item.Flags.QueueBacklog || item.Flags.ReceiveErrors || item.Flags.NoTelemetry) {
+			continue
+		}
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func atlasBriefingHealth(kpis api.StatsOverview, summary api.StatsHealthSummary) api.AtlasBriefingHealth {
+	degraded := summary.StaleObservers + summary.LowBattery + summary.HighNoise + summary.HighAirtime + summary.QueueBacklog + summary.ReceiveErrors
+	score := 100
+	score -= int(minInt64(summary.StaleObservers*5, 45))
+	score -= int(minInt64((summary.LowBattery+summary.HighNoise+summary.HighAirtime+summary.QueueBacklog+summary.ReceiveErrors)*4, 35))
+	score -= int(minInt64(summary.NoTelemetry*2, 20))
+	if kpis.ActiveObservers == 0 {
+		score = 0
+	}
+	if score < 0 {
+		score = 0
+	}
+	status := "ok"
+	if score < 50 {
+		status = "critical"
+	} else if score < 80 || degraded > 0 || summary.NoTelemetry > 0 {
+		status = "degraded"
+	}
+	return api.AtlasBriefingHealth{
+		Status:            status,
+		ServerTime:        time.Now().UnixMilli(),
+		StaleObservers:    summary.StaleObservers,
+		DegradedObservers: degraded,
+		NoTelemetry:       summary.NoTelemetry,
+		HealthScore:       score,
+	}
+}
+
+func atlasRegionHealthScore(kpis api.StatsOverview, activeNodes, routeCount int64) int {
+	if kpis.TotalObservations == 0 {
+		return 35
+	}
+	score := 70
+	if kpis.ActiveObservers > 0 {
+		score += 10
+	}
+	if activeNodes > 0 {
+		score += 10
+	}
+	if routeCount > 0 {
+		score += 10
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func atlasDeltaPct(current, previous int64) float64 {
+	if previous == 0 {
+		if current > 0 {
+			return 100
+		}
+		return 0
+	}
+	return (float64(current-previous) / float64(previous)) * 100
+}
+
+func atlasBriefingPriorities(
+	summary *api.RegionAtlasSummary,
+	health api.AtlasBriefingHealth,
+	healthSummary api.StatsHealthSummary,
+	regions []api.AtlasBriefingRegion,
+	hotspots []api.AtlasHotspot,
+	routes []api.AtlasNotableRoute,
+	degradedObservers []api.StatsObserverHealth,
+) []api.AtlasPriorityItem {
+	items := []api.AtlasPriorityItem{
+		{
+			ID:       "health",
+			Kind:     "broker_or_cache",
+			Severity: atlasHealthSeverity(health.Status),
+			Title:    "Network health snapshot",
+			Detail:   fmt.Sprintf("%s / score %d / %d active observers", health.Status, health.HealthScore, summary.KPIs.ActiveObservers),
+			Region:   summary.Region.Slug,
+			Value:    int64(health.HealthScore),
+			URL:      atlasBriefingURL("Stats", summary.Region.Slug, "", map[string]string{"statsTab": "overview", "range": "24h"}),
+		},
+	}
+	selectedRegion := atlasSelectedBriefingRegion(summary.Region.Slug, regions)
+	if selectedRegion != nil && selectedRegion.ObservationDeltaPct >= 25 {
+		items = append(items, api.AtlasPriorityItem{
+			ID:       "traffic-spike-" + selectedRegion.Slug,
+			Kind:     "traffic_spike",
+			Severity: "warn",
+			Title:    "Traffic surge",
+			Detail:   fmt.Sprintf("%s observations are up %.0f%% over the previous window", selectedRegion.Name, selectedRegion.ObservationDeltaPct),
+			Region:   selectedRegion.Slug,
+			Value:    selectedRegion.ObservationCount,
+			URL:      atlasBriefingURL("Live", selectedRegion.Slug, "", map[string]string{"range": "24h"}),
+		})
+	}
+	if healthSummary.StaleObservers > 0 {
+		items = append(items, api.AtlasPriorityItem{
+			ID:       "stale-observers",
+			Kind:     "stale_observers",
+			Severity: "warn",
+			Title:    "Stale observers",
+			Detail:   fmt.Sprintf("%d observers are stale in this briefing window", healthSummary.StaleObservers),
+			Region:   summary.Region.Slug,
+			Value:    healthSummary.StaleObservers,
+			URL:      atlasBriefingURL("Stats", summary.Region.Slug, "", map[string]string{"statsTab": "rf", "range": "24h"}),
+		})
+	}
+	rfIssues := healthSummary.LowBattery + healthSummary.HighNoise + healthSummary.HighAirtime + healthSummary.QueueBacklog + healthSummary.ReceiveErrors
+	if rfIssues > 0 {
+		items = append(items, api.AtlasPriorityItem{
+			ID:       "rf-degraded",
+			Kind:     "rf_degraded",
+			Severity: "warn",
+			Title:    "RF degradation",
+			Detail:   fmt.Sprintf("%d observer health flags need review", rfIssues),
+			Region:   summary.Region.Slug,
+			Value:    rfIssues,
+			URL:      atlasBriefingURL("Stats", summary.Region.Slug, "", map[string]string{"statsTab": "rf", "range": "24h"}),
+		})
+	}
+	if len(hotspots) > 0 && hotspots[0].ObservationCount > 0 {
+		top := hotspots[0]
+		items = append(items, api.AtlasPriorityItem{
+			ID:       "hot-iata-" + strings.ToLower(top.IATA),
+			Kind:     "hot_iata",
+			Severity: "info",
+			Title:    "Busiest IATA",
+			Detail:   fmt.Sprintf("%s carried %d observations", top.IATA, top.ObservationCount),
+			Region:   summary.Region.Slug,
+			IATA:     top.IATA,
+			Value:    top.ObservationCount,
+			URL:      top.URL,
+		})
+	}
+	if len(routes) > 0 {
+		route := routes[0]
+		at := route.LastSeen
+		routeID := route.RouteID
+		items = append(items, api.AtlasPriorityItem{
+			ID:       fmt.Sprintf("route-%d", route.RouteID),
+			Kind:     "new_route",
+			Severity: "info",
+			Title:    "Verified route corridor",
+			Detail:   fmt.Sprintf("%s / %d hops / %d observations", route.IATA, route.HopCount, route.ObservationCount),
+			Region:   summary.Region.Slug,
+			IATA:     route.IATA,
+			RouteID:  &routeID,
+			Value:    route.ObservationCount,
+			At:       &at,
+			URL:      route.URL,
+		})
+	}
+	if len(summary.TopNodes) > 0 {
+		node := summary.TopNodes[0]
+		nodeID := node.NodeID
+		at := node.LastHeard
+		items = append(items, api.AtlasPriorityItem{
+			ID:       "top-node-" + node.NodeID.String(),
+			Kind:     "top_node",
+			Severity: "info",
+			Title:    "Top node",
+			Detail:   fmt.Sprintf("%s produced %d observations", atlasNodeName(node), node.ObservationCount),
+			Region:   summary.Region.Slug,
+			IATA:     node.IATA,
+			NodeID:   &nodeID,
+			Value:    node.ObservationCount,
+			At:       &at,
+			URL:      atlasBriefingURL("Nodes", summary.Region.Slug, "", map[string]string{"nodeId": node.NodeID.String()}),
+		})
+	}
+	if len(summary.TopObservers) > 0 {
+		observer := summary.TopObservers[0]
+		observerID := observer.ObserverID
+		items = append(items, api.AtlasPriorityItem{
+			ID:         "top-observer-" + observer.ObserverID.String(),
+			Kind:       "top_observer",
+			Severity:   "info",
+			Title:      "Top observer",
+			Detail:     fmt.Sprintf("%s heard %d observations", atlasObserverName(observer), observer.ObservationCount),
+			Region:     summary.Region.Slug,
+			IATA:       observer.IATA,
+			ObserverID: &observerID,
+			Value:      observer.ObservationCount,
+			URL:        atlasBriefingURL("Observers", summary.Region.Slug, "", map[string]string{"observerId": observer.ObserverID.String()}),
+		})
+	}
+	if len(degradedObservers) > 0 {
+		observer := degradedObservers[0]
+		observerID := observer.ObserverID
+		at := observer.LastHeard
+		items = append(items, api.AtlasPriorityItem{
+			ID:         "degraded-observer-" + observer.ObserverID.String(),
+			Kind:       "rf_degraded",
+			Severity:   "warn",
+			Title:      "Observer needs review",
+			Detail:     fmt.Sprintf("%s / health %d / %s", atlasHealthObserverName(observer), observer.HealthScore, observer.Status),
+			Region:     summary.Region.Slug,
+			IATA:       observer.IATA,
+			ObserverID: &observerID,
+			Value:      int64(100 - observer.HealthScore),
+			At:         &at,
+			URL:        atlasBriefingURL("Stats", summary.Region.Slug, "", map[string]string{"statsTab": "observers", "observerId": observer.ObserverID.String(), "range": "24h"}),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		wi := atlasSeverityWeight(items[i].Severity)
+		wj := atlasSeverityWeight(items[j].Severity)
+		if wi != wj {
+			return wi < wj
+		}
+		ai := int64(0)
+		if items[i].At != nil {
+			ai = *items[i].At
+		}
+		aj := int64(0)
+		if items[j].At != nil {
+			aj = *items[j].At
+		}
+		if ai != aj {
+			return ai > aj
+		}
+		if items[i].Value != items[j].Value {
+			return items[i].Value > items[j].Value
+		}
+		return items[i].ID < items[j].ID
+	})
+	return items
+}
+
+func atlasSelectedBriefingRegion(slug string, regions []api.AtlasBriefingRegion) *api.AtlasBriefingRegion {
+	if slug == "" {
+		slug = "all"
+	}
+	for i := range regions {
+		if regions[i].Slug == slug {
+			return &regions[i]
+		}
+	}
+	return nil
+}
+
+func atlasHealthSeverity(status string) string {
+	if status == "critical" {
+		return "critical"
+	}
+	if status == "degraded" {
+		return "warn"
+	}
+	return "good"
+}
+
+func atlasSeverityWeight(severity string) int {
+	switch severity {
+	case "critical":
+		return 0
+	case "warn":
+		return 1
+	case "info":
+		return 2
+	case "good":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func atlasNodeName(node api.TopNode) string {
+	if node.NodeName != nil && *node.NodeName != "" {
+		return *node.NodeName
+	}
+	return node.NodeID.String()[:8]
+}
+
+func atlasObserverName(observer api.TopObserver) string {
+	if observer.DisplayName != nil && *observer.DisplayName != "" {
+		return *observer.DisplayName
+	}
+	return observer.ObserverID.String()[:8]
+}
+
+func atlasHealthObserverName(observer api.StatsObserverHealth) string {
+	if observer.DisplayName != nil && *observer.DisplayName != "" {
+		return *observer.DisplayName
+	}
+	return observer.ObserverID.String()[:8]
+}
+
+func atlasBriefingURL(tab, regionSlug, iata string, extra map[string]string) string {
+	params := url.Values{}
+	params.Set("tab", tab)
+	if iata != "" {
+		params.Set("iata", iata)
+	} else if regionSlug != "" && regionSlug != "all" {
+		params.Set("regions", regionSlug)
+	}
+	for key, value := range extra {
+		if value != "" {
+			params.Set(key, value)
+		}
+	}
+	return "/?" + params.Encode()
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 type atlasPointRow struct {

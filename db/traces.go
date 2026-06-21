@@ -65,9 +65,65 @@ func (s *Store) ListTraceTags(ctx context.Context, iatas []string, scope, traceT
 	return items, nil
 }
 
-func (s *Store) GetTraceByTag(ctx context.Context, tag string) (*api.TraceDetail, error) {
-	rows, err := s.q.GetPacketsByTraceTag(ctx, tag)
+func (s *Store) GetTraceByTag(ctx context.Context, tag string, iatas []string, scope string, since, until time.Time) (*api.TraceDetail, error) {
+	iataFilter := strings.Join(iatas, ",")
+	queryRows, err := s.pool.Query(ctx, `
+SELECT encode(p.packet_hash, 'hex') AS packet_hash_hex,
+    p.route_type,
+    p.first_heard_at,
+    p.last_heard_at,
+    p.parsed_payload,
+    p.scope_id,
+    ts.name AS scope_name
+FROM packets p
+LEFT JOIN transport_scopes ts ON ts.id = p.scope_id
+WHERE p.trace_tag = decode($1, 'hex')
+  AND ($2::text = '' OR EXISTS (
+    SELECT 1 FROM packet_observations po
+    WHERE po.packet_hash = p.packet_hash
+      AND po.iata = ANY(string_to_array($2::text, ','))
+  ))
+  AND ($3::text = '' OR ts.name = $3)
+  AND ($4::timestamptz IS NULL OR p.first_heard_at >= $4)
+  AND ($5::timestamptz IS NULL OR p.first_heard_at <= $5)
+ORDER BY p.first_heard_at ASC`,
+		tag,
+		iataFilter,
+		scope,
+		nullableTime(since),
+		nullableTime(until),
+	)
 	if err != nil {
+		return nil, err
+	}
+	defer queryRows.Close()
+
+	type tracePacketRow struct {
+		PacketHashHex string
+		RouteType     int16
+		FirstHeardAt  pgtype.Timestamptz
+		LastHeardAt   pgtype.Timestamptz
+		ParsedPayload []byte
+		ScopeID       *int32
+		ScopeName     *string
+	}
+	rows := []tracePacketRow{}
+	for queryRows.Next() {
+		var row tracePacketRow
+		if err := queryRows.Scan(
+			&row.PacketHashHex,
+			&row.RouteType,
+			&row.FirstHeardAt,
+			&row.LastHeardAt,
+			&row.ParsedPayload,
+			&row.ScopeID,
+			&row.ScopeName,
+		); err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	if err := queryRows.Err(); err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {
@@ -100,22 +156,25 @@ func (s *Store) GetTraceByTag(ctx context.Context, tag string) (*api.TraceDetail
 			}
 			packet.RawPath = rawPath
 		}
-		// fetch observations to get IATAs for route resolution
-		packetHashBytes, err := hex.DecodeString(r.PacketHashHex)
-		if err == nil {
-			obsRows, err := s.q.ListObservationsForPacket(ctx, packetHashBytes)
-			if err == nil && len(obsRows) > 0 {
-				iatas := make([]string, 0, len(obsRows))
-				seen := make(map[string]struct{})
-				for _, v := range obsRows {
-					if _, ok := seen[v.Iata]; !ok {
-						seen[v.Iata] = struct{}{}
-						iatas = append(iatas, v.Iata)
+		// Resolve paths within the requested IATA/region when provided; otherwise
+		// derive the IATAs that actually observed this packet.
+		resolveIATAs := append([]string(nil), iatas...)
+		if len(resolveIATAs) == 0 {
+			packetHashBytes, err := hex.DecodeString(r.PacketHashHex)
+			if err == nil {
+				obsRows, err := s.q.ListObservationsForPacket(ctx, packetHashBytes)
+				if err == nil && len(obsRows) > 0 {
+					seen := make(map[string]struct{})
+					for _, v := range obsRows {
+						if _, ok := seen[v.Iata]; !ok {
+							seen[v.Iata] = struct{}{}
+							resolveIATAs = append(resolveIATAs, v.Iata)
+						}
 					}
 				}
-				packet.ResolvedRoute = s.resolveTraceRoute(ctx, &parsed, iatas)
 			}
 		}
+		packet.ResolvedRoute = s.resolveTraceRoute(ctx, &parsed, resolveIATAs)
 		detail.Packets = append(detail.Packets, packet)
 	}
 	return detail, nil

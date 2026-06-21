@@ -40,6 +40,10 @@ func (stubReader) GetRegionAtlasSummary(ctx context.Context, slug string, since,
 	return nil, nil
 }
 
+func (stubReader) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
+	return nil, nil
+}
+
 func (stubReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
 	return api.Page[api.AtlasReplayPacket]{}, nil
 }
@@ -82,6 +86,10 @@ func (stubReader) GetObserverTelemetryBucketed(ctx context.Context, observerID u
 
 func (stubReader) GetObserverScopes(ctx context.Context, observerID uuid.UUID) ([]string, error) {
 	return nil, nil
+}
+
+func (stubReader) GetObserverTopology(ctx context.Context, observerID uuid.UUID, filter api.StatsFilter) (*api.ObserverTopologySummary, error) {
+	return &api.ObserverTopologySummary{}, nil
 }
 
 func (stubReader) ListObserverAdverts(ctx context.Context, observerID uuid.UUID, cursor int64, limit int32) (api.Page[api.AdvertObservation], error) {
@@ -220,11 +228,11 @@ func (stubReader) ListTraceTags(ctx context.Context, iatas []string, scope, trac
 	return nil, nil
 }
 
-func (stubReader) GetTraceByTag(ctx context.Context, tag string) (*api.TraceDetail, error) {
+func (stubReader) GetTraceByTag(ctx context.Context, tag string, iatas []string, scope string, since, until time.Time) (*api.TraceDetail, error) {
 	return nil, nil
 }
 
-func (stubReader) ListKnownRoutes(ctx context.Context, iata string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
+func (stubReader) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
 	return nil, nil
 }
 

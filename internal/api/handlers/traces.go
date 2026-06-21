@@ -34,6 +34,7 @@ func TracesRouter(reader api.Reader) http.Handler {
 //	@Param		regionId	query		int		false	"Filter by region ID"
 //	@Param		scope		query		string	false	"Filter by transport scope name"
 //	@Param		type		query		string	false	"Filter by type: TRACE or PING (default: all)"
+//	@Param		range		query		string	false	"Duration window: 24h, 7d, 30d"
 //	@Param		since		query		int		false	"Filter by first_heard_at >= since (epoch ms)"
 //	@Param		until		query		int		false	"Filter by first_heard_at <= until (epoch ms)"
 //	@Param		cursor		query		int		false	"last_heard_at epoch ms of last item for pagination"
@@ -49,17 +50,12 @@ func listTraceTags(reader api.Reader) http.HandlerFunc {
 				limit = int32(v)
 			}
 		}
-		var since, until, cursor time.Time
-		if v := r.URL.Query().Get("since"); v != "" {
-			if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-				since = time.UnixMilli(ms)
-			}
+		since, until, _, err := parseStatsWindow(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
 		}
-		if v := r.URL.Query().Get("until"); v != "" {
-			if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-				until = time.UnixMilli(ms)
-			}
-		}
+		var cursor time.Time
 		if v := r.URL.Query().Get("cursor"); v != "" {
 			if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 				cursor = time.UnixMilli(ms)
@@ -91,14 +87,35 @@ func listTraceTags(reader api.Reader) http.HandlerFunc {
 //	@Tags		Traces
 //	@Produce	json
 //	@Param		tag	path		string	true	"Trace tag hex e.g. a3f1b2c4"
+//	@Param		iatas	query		string	false	"Filter route resolution by IATA code(s), comma-separated"
+//	@Param		region	query		string	false	"Filter route resolution by region slug"
+//	@Param		scope	query		string	false	"Filter by transport scope name"
+//	@Param		range	query		string	false	"Duration window: 24h, 7d, 30d"
+//	@Param		since	query		int		false	"Filter by first_heard_at >= since (epoch ms)"
+//	@Param		until	query		int		false	"Filter by first_heard_at <= until (epoch ms)"
 //	@Success	200	{object}	api.TraceDetail
+//	@Failure	400	{object}	handlers.APIError
 //	@Failure	404	{object}	handlers.APIError
 //	@Failure	500	{object}	handlers.APIError
 //	@Router		/traces/{tag} [get]
 func getTrace(reader api.Reader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tag := chi.URLParam(r, "tag")
-		trace, err := reader.GetTraceByTag(r.Context(), tag)
+		since, until, _, err := parseStatsWindow(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		iatas := parseIATAs(r)
+		if regionIDStr := r.URL.Query().Get("regionId"); regionIDStr != "" || r.URL.Query().Get("region") != "" {
+			regionIATAs, err := resolveRegionIATAs(r.Context(), regionIDStr, r.URL.Query().Get("region"), reader)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			iatas = append(iatas, regionIATAs...)
+		}
+		trace, err := reader.GetTraceByTag(r.Context(), tag, iatas, r.URL.Query().Get("scope"), since, until)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "internal server error")
 			return

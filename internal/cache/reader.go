@@ -21,6 +21,7 @@ const (
 	keyRegionPrefix               = "beacon:region:"
 	keyRegionSlugPrefix           = "beacon:region:slug:"
 	keyAtlasRegionPrefix          = "beacon:atlas:region:"
+	keyAtlasBriefingPrefix        = "beacon:atlas:briefing:"
 	keyLiveSummaryPrefix          = "beacon:live:summary:"
 	keyScopeNames                 = "beacon:scope:names"
 	keyScopeStats                 = "beacon:scope:stats"
@@ -235,6 +236,15 @@ func (cr *CachedReader) GetRegionAtlasSummary(ctx context.Context, slug string, 
 	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasRegionPrefix, slugOrAll(slug), since.UnixMilli(), until.UnixMilli())
 	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.RegionAtlasSummary, error) {
 		return cr.inner.GetRegionAtlasSummary(ctx, slug, since, until)
+	})
+}
+
+// GetAtlasBriefing implements [api.Reader].
+func (cr *CachedReader) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
+	since, until = atlasCacheWindow(since, until, cr.ttl.Atlas)
+	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasBriefingPrefix, slugOrAll(regionSlug), since.UnixMilli(), until.UnixMilli())
+	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.AtlasBriefing, error) {
+		return cr.inner.GetAtlasBriefing(ctx, regionSlug, since, until)
 	})
 }
 
@@ -523,8 +533,8 @@ func (cr *CachedReader) GetChannel(ctx context.Context, channelID int32) (*api.C
 }
 
 // GetTraceByTag implements [api.Reader].
-func (cr *CachedReader) GetTraceByTag(ctx context.Context, tag string) (*api.TraceDetail, error) {
-	return cr.inner.GetTraceByTag(ctx, tag)
+func (cr *CachedReader) GetTraceByTag(ctx context.Context, tag string, iatas []string, scope string, since, until time.Time) (*api.TraceDetail, error) {
+	return cr.inner.GetTraceByTag(ctx, tag, iatas, scope, since, until)
 }
 
 // GetKnownRoutesByNode implements [api.Reader].
@@ -613,8 +623,8 @@ func (cr *CachedReader) GetLiveSummary(ctx context.Context, filter api.LiveSumma
 }
 
 // ListKnownRoutes implements [api.Reader].
-func (cr *CachedReader) ListKnownRoutes(ctx context.Context, iata string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
-	return cr.inner.ListKnownRoutes(ctx, iata, hopCount, cursor, limit)
+func (cr *CachedReader) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
+	return cr.inner.ListKnownRoutes(ctx, iatas, hopCount, cursor, limit)
 }
 
 // GetKnownRoute implements [api.Reader].
@@ -635,4 +645,12 @@ func (cr *CachedReader) SearchCrossIATARoutes(ctx context.Context, fromHash, fro
 // ListTraceTags implements [api.Reader].
 func (cr *CachedReader) ListTraceTags(ctx context.Context, iatas []string, scope, traceType string, since, until time.Time, cursor time.Time, limit int32) ([]api.TraceTagSummary, error) {
 	return cr.inner.ListTraceTags(ctx, iatas, scope, traceType, since, until, cursor, limit)
+}
+
+// GetObserverTopology implements [api.Reader].
+func (cr *CachedReader) GetObserverTopology(ctx context.Context, observerID uuid.UUID, filter api.StatsFilter) (*api.ObserverTopologySummary, error) {
+	key := fmt.Sprintf("%s%s:%s", keyObserverPrefix, observerID.String(), statsFilterCacheKey("topology:", filter, cr.ttl.Stats))
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.ObserverTopologySummary, error) {
+		return cr.inner.GetObserverTopology(ctx, observerID, filter)
+	})
 }

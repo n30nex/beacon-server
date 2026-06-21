@@ -67,3 +67,52 @@ type ObserverTelemetry struct {
 	Interval string                   `json:"interval"`
 	Points   []ObserverTelemetryPoint `json:"points"`
 }
+
+// ObserverTopologyNode is a node most often heard by a single observer in a
+// topology analysis window.
+type ObserverTopologyNode struct {
+	ID               uuid.UUID `json:"id"`
+	Name             *string   `json:"name,omitempty"`
+	PublicKey        string    `json:"publicKey"`
+	IATAs            []string  `json:"iatas"`
+	PacketCount      int64     `json:"packetCount"`
+	ObservationCount int64     `json:"observationCount"`
+	LastHeard        int64     `json:"lastHeard"`
+	AvgSNR           *float64  `json:"avgSnr,omitempty"`
+}
+
+// ObserverTopologyTraceTag is a trace or ping tag ranked for one observer.
+type ObserverTopologyTraceTag struct {
+	TraceTag         string   `json:"traceTag"`
+	TraceType        string   `json:"traceType"`
+	IATAs            []string `json:"iatas"`
+	PacketCount      int64    `json:"packetCount"`
+	ObservationCount int64    `json:"observationCount"`
+	LastHeard        int64    `json:"lastHeard"`
+}
+
+// ObserverTopologyScope is a transport scope seen by one observer.
+type ObserverTopologyScope struct {
+	Scope            string `json:"scope"`
+	PacketCount      int64  `json:"packetCount"`
+	ObservationCount int64  `json:"observationCount"`
+	LastHeard        int64  `json:"lastHeard"`
+}
+
+// ObserverTopologySummary is a prepared topology/traffic summary for the
+// observer workbench.
+type ObserverTopologySummary struct {
+	ServerTime       int64                      `json:"serverTime"`
+	Window           StatsWindow                `json:"window"`
+	ObserverID       uuid.UUID                  `json:"observerId"`
+	PacketCount      int64                      `json:"packetCount"`
+	ObservationCount int64                      `json:"observationCount"`
+	ActiveIATAs      int64                      `json:"activeIatas"`
+	AvgSNR           *float64                   `json:"avgSnr,omitempty"`
+	PayloadMix       []PayloadBreakdownItem     `json:"payloadMix"`
+	RouteMix         []LiveRouteMixItem         `json:"routeMix"`
+	TopNodes         []ObserverTopologyNode     `json:"topNodes"`
+	TopTraceTags     []ObserverTopologyTraceTag `json:"topTraceTags"`
+	TopScopes        []ObserverTopologyScope    `json:"topScopes"`
+	RecentAdverts    []AdvertObservation        `json:"recentAdverts"`
+}

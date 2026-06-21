@@ -26,6 +26,7 @@ func ObserversRouter(reader api.Reader) http.Handler {
 		r.Get("/", getObserver(reader))
 		r.Get("/adverts", listObserverAdverts(reader))
 		r.Get("/telemetry", getObserverTelemetry(reader))
+		r.Get("/topology", getObserverTopology(reader))
 	})
 	return r
 }
@@ -117,6 +118,49 @@ func getObserver(reader api.Reader) http.HandlerFunc {
 			return
 		}
 		respond(w, http.StatusOK, obs)
+	}
+}
+
+// getObserverTopology godoc
+//
+//	@Summary	Get observer topology summary
+//	@Tags		Observers
+//	@Produce	json
+//	@Param		observerId	path		string	true	"Observer UUID"
+//	@Param		iatas		query		string	false	"Filter by IATA code(s), comma-separated"
+//	@Param		region		query		string	false	"Filter by region slug"
+//	@Param		range		query		string	false	"Duration window: 24h, 7d, 30d"
+//	@Param		since		query		int		false	"Window start epoch ms"
+//	@Param		until		query		int		false	"Window end epoch ms"
+//	@Param		bucket		query		string	false	"Bucket: 1h, 6h, 24h"
+//	@Param		limit		query		int		false	"Max ranked rows (default 25)"
+//	@Success	200			{object}	api.ObserverTopologySummary
+//	@Failure	400			{object}	handlers.APIError
+//	@Failure	404			{object}	handlers.APIError
+//	@Failure	500			{object}	handlers.APIError
+//	@Router		/observers/{observerId}/topology [get]
+func getObserverTopology(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		observerID, err := uuid.Parse(chi.URLParam(r, "observerId"))
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid observer ID")
+			return
+		}
+		filter, err := parseStatsFilter(r, reader, 25)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		summary, err := reader.GetObserverTopology(r.Context(), observerID, filter)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if summary == nil {
+			respondError(w, http.StatusNotFound, "observer not found")
+			return
+		}
+		respond(w, http.StatusOK, summary)
 	}
 }
 
