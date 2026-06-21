@@ -44,6 +44,8 @@ go test ./...
 
 The local smoke script checks `/healthz`, `/readyz`, `/api/v1/brokers`, `/api/v1/atlas/briefing`, `/api/v1/live/backfill`, `/api/v1/search`, the web UI, WebSocket hello, and optional local PostgreSQL/Redis TCP ports. It exits nonzero on failed required checks. Use `-RequireLocalPorts` when the database and cache are expected to be exposed on `127.0.0.1`.
 
+The WebSocket protocol is documented at `docs/ws-protocol.md`; `internal/ws` contract tests guard the stable message types, subscription field names, and live event discriminators.
+
 ## Current Improvement Tracks
 
 - Stabilize and commit the current modern UI work in `beacon-web`.
@@ -55,7 +57,7 @@ The local smoke script checks `/healthz`, `/readyz`, `/api/v1/brokers`, `/api/v1
 ## Follow-Up Backlog
 
 - Generate or contract-check frontend API types from Swagger/OpenAPI.
-- Add REST and WebSocket contract tests for major payloads.
+- Expand REST and WebSocket contract tests for major payload shapes beyond the current OpenAPI and WebSocket discriminator guards.
 - Expand `/healthz` into separate readiness/dependency details for database, cache, MQTT brokers, ingest workers, WebSocket hub, and build metadata.
 - Add structured logs for WebSocket parse failures, reconnects, request latency, slow DB queries, cache behavior, ingest errors, and packet decode failures.
 - Add saved views, shareable investigation URLs, export/copy affordances, and accessibility/contrast checks.
