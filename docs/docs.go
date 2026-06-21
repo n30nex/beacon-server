@@ -22,6 +22,57 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/atlas/briefing": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Atlas"
+                ],
+                "summary": "Get Atlas operator briefing",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Region slug, defaults to all",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window start as epoch milliseconds",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window end as epoch milliseconds",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefing"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/atlas/regions/{slug}": {
             "get": {
                 "produces": [
@@ -1511,6 +1562,94 @@ const docTemplate = `{
                 }
             }
         },
+        "/observers/{observerId}/topology": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Observers"
+                ],
+                "summary": "Get observer topology summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Observer UUID",
+                        "name": "observerId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by IATA code(s), comma-separated",
+                        "name": "iatas",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region slug",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Duration window: 24h, 7d, 30d",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window start epoch ms",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window end epoch ms",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bucket: 1h, 6h, 24h",
+                        "name": "bucket",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max ranked rows (default 25)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologySummary"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/packets": {
             "get": {
                 "produces": [
@@ -1753,6 +1892,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/readyz": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Get runtime readiness",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/regions": {
             "get": {
                 "produces": [
@@ -1835,6 +1999,24 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by IATA code",
                         "name": "iata",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by IATA code(s), comma-separated",
+                        "name": "iatas",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region slug",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by region ID",
+                        "name": "regionId",
                         "in": "query"
                     },
                     {
@@ -3509,6 +3691,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Duration window: 24h, 7d, 30d",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Filter by first_heard_at \u003e= since (epoch ms)",
                         "name": "since",
@@ -3568,6 +3756,42 @@ const docTemplate = `{
                         "name": "tag",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter route resolution by IATA code(s), comma-separated",
+                        "name": "iatas",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter route resolution by region slug",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by transport scope name",
+                        "name": "scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Duration window: 24h, 7d, 30d",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by first_heard_at \u003e= since (epoch ms)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by first_heard_at \u003c= until (epoch ms)",
+                        "name": "until",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -3575,6 +3799,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TraceDetail"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
                         }
                     },
                     "404": {
@@ -3653,6 +3883,179 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefing": {
+            "type": "object",
+            "properties": {
+                "degradedObservers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsObserverHealth"
+                    }
+                },
+                "health": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefingHealth"
+                },
+                "hotspots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasHotspot"
+                    }
+                },
+                "notableRoutes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasNotableRoute"
+                    }
+                },
+                "payloadMix": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.PayloadBreakdownItem"
+                    }
+                },
+                "priorities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasPriorityItem"
+                    }
+                },
+                "region": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.Region"
+                },
+                "regions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefingRegion"
+                    }
+                },
+                "routeMix": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveRouteMixItem"
+                    }
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ScopeSummary"
+                    }
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "topNodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopNode"
+                    }
+                },
+                "topObservers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopObserver"
+                    }
+                },
+                "window": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasWindow"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefingHealth": {
+            "type": "object",
+            "properties": {
+                "degradedObservers": {
+                    "type": "integer"
+                },
+                "healthScore": {
+                    "type": "integer"
+                },
+                "noTelemetry": {
+                    "type": "integer"
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "staleObservers": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasBriefingRegion": {
+            "type": "object",
+            "properties": {
+                "activeIatas": {
+                    "type": "integer"
+                },
+                "activeNodes": {
+                    "type": "integer"
+                },
+                "activeObservers": {
+                    "type": "integer"
+                },
+                "healthScore": {
+                    "type": "integer"
+                },
+                "iataCount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "observationDeltaPct": {
+                    "type": "number"
+                },
+                "packetCount": {
+                    "type": "integer"
+                },
+                "routeCount": {
+                    "type": "integer"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "topIata": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasHotspot": {
+            "type": "object",
+            "properties": {
+                "activeObservers": {
+                    "type": "integer"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "iata": {
+                    "type": "string"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lng": {
+                    "type": "number"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "uniquePackets": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasIATA": {
             "type": "object",
             "properties": {
@@ -3679,6 +4082,35 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasNotableRoute": {
+            "type": "object",
+            "properties": {
+                "hopCount": {
+                    "type": "integer"
+                },
+                "iata": {
+                    "type": "string"
+                },
+                "lastSeen": {
+                    "type": "integer"
+                },
+                "nodeNames": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "routeId": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasPathPoint": {
             "type": "object",
             "properties": {
@@ -3700,6 +4132,50 @@ const docTemplate = `{
                 },
                 "lng": {
                     "type": "number"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.AtlasPriorityItem": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "integer"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "iata": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "nodeId": {
+                    "type": "string"
+                },
+                "observerId": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "routeId": {
+                    "type": "integer"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "integer"
                 }
             }
         },
@@ -5064,6 +5540,143 @@ const docTemplate = `{
                 },
                 "uptimeSeconds": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyNode": {
+            "type": "object",
+            "properties": {
+                "avgSnr": {
+                    "type": "number"
+                },
+                "iatas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastHeard": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "packetCount": {
+                    "type": "integer"
+                },
+                "publicKey": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyScope": {
+            "type": "object",
+            "properties": {
+                "lastHeard": {
+                    "type": "integer"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "packetCount": {
+                    "type": "integer"
+                },
+                "scope": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologySummary": {
+            "type": "object",
+            "properties": {
+                "activeIatas": {
+                    "type": "integer"
+                },
+                "avgSnr": {
+                    "type": "number"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "observerId": {
+                    "type": "string"
+                },
+                "packetCount": {
+                    "type": "integer"
+                },
+                "payloadMix": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.PayloadBreakdownItem"
+                    }
+                },
+                "recentAdverts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.AdvertObservation"
+                    }
+                },
+                "routeMix": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveRouteMixItem"
+                    }
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "topNodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyNode"
+                    }
+                },
+                "topScopes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyScope"
+                    }
+                },
+                "topTraceTags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyTraceTag"
+                    }
+                },
+                "window": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsWindow"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.ObserverTopologyTraceTag": {
+            "type": "object",
+            "properties": {
+                "iatas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "lastHeard": {
+                    "type": "integer"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "packetCount": {
+                    "type": "integer"
+                },
+                "traceTag": {
+                    "type": "string"
+                },
+                "traceType": {
+                    "type": "string"
                 }
             }
         },
@@ -7364,6 +7977,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },
@@ -7392,6 +8008,12 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/internal_api_handlers.HealthDependency"
                     }
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "ready": {
+                    "type": "boolean"
                 },
                 "serverTime": {
                     "type": "integer"

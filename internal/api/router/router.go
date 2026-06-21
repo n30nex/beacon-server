@@ -29,6 +29,8 @@ import (
 // Route shape:
 //
 //	/ws                → WebSocket (public in v1)
+//	/healthz           → liveness/dependency health
+//	/readyz            → strict readiness for deploy checks
 //	/api/v1/           → public group
 //	  /packets         → packets subrouter
 //	  /nodes           → nodes subrouter
@@ -89,6 +91,7 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, maxConnsPerIP 
 	// ── WebSocket ────────────────────────────────────────────────────────────
 	r.Get("/ws", ws.Handler(h, reader, maxConnsPerIP))
 	r.Get("/healthz", handlers.HealthHandler(reader, workers, healthCfg))
+	r.Get("/readyz", handlers.ReadinessHandler(reader, workers, healthCfg))
 
 	// ── Public REST API (v1) ─────────────────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {

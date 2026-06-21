@@ -139,6 +139,10 @@ Invoke-JsonCheck "healthz" "/healthz" `
   { param($data) $data.status -in @("ok", "degraded") -and $data.dependencies.database.status -eq "ok" } `
   { param($data) "status=$($data.status); db=$($data.dependencies.database.status); cache=$($data.dependencies.cache.status); brokers=$($data.brokers.Count)" }
 
+Invoke-JsonCheck "readyz" "/readyz" `
+  { param($data) $data.ready -eq $true -and $data.dependencies.database.status -eq "ok" } `
+  { param($data) "ready=$($data.ready); db=$($data.dependencies.database.status); ingest=$($data.dependencies.ingestWorkers.status)" }
+
 Invoke-JsonCheck "brokers" "/api/v1/brokers" `
   { param($data) $null -ne $data } `
   { param($data) "count=$($data.Count); connected=$(($data | Where-Object { $_.connected }).Count)" }

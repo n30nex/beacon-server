@@ -42,7 +42,7 @@ go test ./...
 .\scripts\Test-BeaconLocal.ps1
 ```
 
-The local smoke script checks `/healthz`, `/api/v1/brokers`, `/api/v1/atlas/briefing`, `/api/v1/live/backfill`, `/api/v1/search`, the web UI, WebSocket hello, and optional local PostgreSQL/Redis TCP ports. It exits nonzero on failed required checks. Use `-RequireLocalPorts` when the database and cache are expected to be exposed on `127.0.0.1`.
+The local smoke script checks `/healthz`, `/readyz`, `/api/v1/brokers`, `/api/v1/atlas/briefing`, `/api/v1/live/backfill`, `/api/v1/search`, the web UI, WebSocket hello, and optional local PostgreSQL/Redis TCP ports. It exits nonzero on failed required checks. Use `-RequireLocalPorts` when the database and cache are expected to be exposed on `127.0.0.1`.
 
 ## Current Improvement Tracks
 

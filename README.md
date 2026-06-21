@@ -101,10 +101,10 @@ Beacon stack:
 .\scripts\Test-BeaconLocal.ps1
 ```
 
-The script probes API health, broker status, Atlas briefing, live backfill,
-global search, the web UI, WebSocket hello, PostgreSQL, and Redis. It exits
-nonzero if a required surface is not healthy. See `docs/project-status.md` for
-the current project-wide validation checklist.
+The script probes API health/readiness, broker status, Atlas briefing, live
+backfill, global search, the web UI, WebSocket hello, PostgreSQL, and Redis. It
+exits nonzero if a required surface is not healthy. See `docs/project-status.md`
+for the current project-wide validation checklist.
 
 ### Cold start and path resolution
 
