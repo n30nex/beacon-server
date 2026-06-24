@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -15,6 +16,15 @@ import (
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+)
+
+const (
+	defaultRouteNeighborhoodMaxHops      int32 = 5
+	defaultRouteNeighborhoodRouteLimit   int32 = 300
+	maxRouteNeighborhoodRouteLimit       int32 = 600
+	maxRouteNeighborhoodFrontierNodes          = 48
+	maxRouteNeighborhoodQueryCount             = 96
+	maxRouteNeighborhoodSourceRouteCount int64 = 2500
 )
 
 // NodesRouter mounts all /nodes routes onto a subrouter.
@@ -351,6 +361,7 @@ func listNodeNeighbors(reader api.Reader) http.HandlerFunc {
 //	@Param		region	query		string	false	"Filter by region slug"
 //	@Param		regionId	query		int		false	"Filter by region ID"
 //	@Param		maxHops	query		int		false	"Maximum graph hops, capped at 5"
+//	@Param		routeLimit	query	int		false	"Known routes per node/IATA expansion, capped at 600"
 //	@Success	200		{object}	api.NodeReach
 //	@Failure	400		{object}	handlers.APIError
 //	@Failure	500		{object}	handlers.APIError
@@ -363,16 +374,10 @@ func getNodeReach(reader api.Reader) http.HandlerFunc {
 			return
 		}
 
-		maxHops := int32(5)
-		if v := r.URL.Query().Get("maxHops"); v != "" {
-			parsed, err := strconv.ParseInt(v, 10, 32)
-			if err != nil || parsed <= 0 {
-				respondError(w, http.StatusBadRequest, "maxHops must be a positive integer")
-				return
-			}
-			if parsed < int64(maxHops) {
-				maxHops = int32(parsed)
-			}
+		options, err := parseRouteNeighborhoodOptions(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		iatas := parseIATAs(r)
@@ -384,7 +389,7 @@ func getNodeReach(reader api.Reader) http.HandlerFunc {
 			}
 			iatas = append(iatas, regionIATAs...)
 		}
-		reach, err := buildNodeReach(r.Context(), reader, nodeID, uniqueIATAs(iatas), maxHops)
+		reach, err := buildNodeReach(r.Context(), reader, nodeID, uniqueIATAs(iatas), options)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -404,6 +409,7 @@ func getNodeReach(reader api.Reader) http.HandlerFunc {
 //	@Param		region	query		string	false	"Filter by region slug"
 //	@Param		regionId	query		int		false	"Filter by region ID"
 //	@Param		maxHops	query		int		false	"Maximum graph hops, capped at 5"
+//	@Param		routeLimit	query	int		false	"Known routes per node/IATA expansion, capped at 600"
 //	@Success	200		{object}	api.NodeRouteNeighborhood
 //	@Failure	400		{object}	handlers.APIError
 //	@Failure	500		{object}	handlers.APIError
@@ -416,16 +422,10 @@ func getNodeRouteNeighborhood(reader api.Reader) http.HandlerFunc {
 			return
 		}
 
-		maxHops := int32(5)
-		if v := r.URL.Query().Get("maxHops"); v != "" {
-			parsed, err := strconv.ParseInt(v, 10, 32)
-			if err != nil || parsed <= 0 {
-				respondError(w, http.StatusBadRequest, "maxHops must be a positive integer")
-				return
-			}
-			if parsed < int64(maxHops) {
-				maxHops = int32(parsed)
-			}
+		options, err := parseRouteNeighborhoodOptions(r)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		iatas := parseIATAs(r)
@@ -437,7 +437,7 @@ func getNodeRouteNeighborhood(reader api.Reader) http.HandlerFunc {
 			}
 			iatas = append(iatas, regionIATAs...)
 		}
-		neighborhood, err := buildRouteNeighborhood(r.Context(), reader, nodeID, uniqueIATAs(iatas), maxHops)
+		neighborhood, err := buildRouteNeighborhood(r.Context(), reader, nodeID, uniqueIATAs(iatas), options)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -470,8 +470,60 @@ type nodeReachIATAAccumulator struct {
 	observationCount int64
 }
 
-func buildNodeReach(ctx context.Context, reader api.Reader, nodeID uuid.UUID, iatas []string, maxHops int32) (*api.NodeReach, error) {
-	neighborhood, err := buildRouteNeighborhood(ctx, reader, nodeID, iatas, maxHops)
+type routeNeighborhoodOptions struct {
+	maxHops    int32
+	routeLimit int32
+}
+
+type routeNeighborhoodBuildStats struct {
+	queryCount       int64
+	sourceRouteCount int64
+	truncated        bool
+}
+
+func parseRouteNeighborhoodOptions(r *http.Request) (routeNeighborhoodOptions, error) {
+	options := routeNeighborhoodOptions{
+		maxHops:    defaultRouteNeighborhoodMaxHops,
+		routeLimit: defaultRouteNeighborhoodRouteLimit,
+	}
+	if v := r.URL.Query().Get("maxHops"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || parsed <= 0 {
+			return options, fmt.Errorf("maxHops must be a positive integer")
+		}
+		if parsed < int64(options.maxHops) {
+			options.maxHops = int32(parsed)
+		}
+	}
+	if v := r.URL.Query().Get("routeLimit"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || parsed <= 0 {
+			return options, fmt.Errorf("routeLimit must be a positive integer")
+		}
+		options.routeLimit = min32(int32(parsed), maxRouteNeighborhoodRouteLimit)
+	}
+	return options, nil
+}
+
+func normalizeRouteNeighborhoodOptions(options routeNeighborhoodOptions) routeNeighborhoodOptions {
+	if options.maxHops < 1 {
+		options.maxHops = defaultRouteNeighborhoodMaxHops
+	}
+	if options.maxHops > defaultRouteNeighborhoodMaxHops {
+		options.maxHops = defaultRouteNeighborhoodMaxHops
+	}
+	if options.routeLimit < 1 {
+		options.routeLimit = defaultRouteNeighborhoodRouteLimit
+	}
+	if options.routeLimit > maxRouteNeighborhoodRouteLimit {
+		options.routeLimit = maxRouteNeighborhoodRouteLimit
+	}
+	return options
+}
+
+func buildNodeReach(ctx context.Context, reader api.Reader, nodeID uuid.UUID, iatas []string, options routeNeighborhoodOptions) (*api.NodeReach, error) {
+	options = normalizeRouteNeighborhoodOptions(options)
+	neighborhood, err := buildRouteNeighborhood(ctx, reader, nodeID, iatas, options)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +609,7 @@ func buildNodeReach(ctx context.Context, reader api.Reader, nodeID uuid.UUID, ia
 
 	buckets := make([]api.NodeReachHopBucket, 0, len(hopBuckets))
 	for hopDistance, acc := range hopBuckets {
-		if hopDistance <= 0 || hopDistance > maxHops {
+		if hopDistance <= 0 || hopDistance > options.maxHops {
 			continue
 		}
 		buckets = append(buckets, api.NodeReachHopBucket{
@@ -633,11 +685,15 @@ func buildNodeReach(ctx context.Context, reader api.Reader, nodeID uuid.UUID, ia
 
 	return &api.NodeReach{
 		NodeID:           nodeID,
-		MaxHops:          maxHops,
+		MaxHops:          options.maxHops,
 		GeneratedAt:      time.Now().UnixMilli(),
 		ReachableNodes:   int64(len(nodeAccs)),
 		VerifiedEdges:    int64(len(neighborhood.Edges)),
 		RouteCount:       int64(len(routeIDs)),
+		SourceRouteCount: neighborhood.SourceRouteCount,
+		QueryCount:       neighborhood.QueryCount,
+		RouteLimit:       neighborhood.RouteLimit,
+		Truncated:        neighborhood.Truncated,
 		ObservationCount: observationCount,
 		HopBuckets:       buckets,
 		TopNodes:         topNodes,
@@ -655,7 +711,8 @@ type routeEdgeAccumulator struct {
 	observationCount int64
 }
 
-func buildRouteNeighborhood(ctx context.Context, reader api.Reader, nodeID uuid.UUID, iatas []string, maxHops int32) (*api.NodeRouteNeighborhood, error) {
+func buildRouteNeighborhood(ctx context.Context, reader api.Reader, nodeID uuid.UUID, iatas []string, options routeNeighborhoodOptions) (*api.NodeRouteNeighborhood, error) {
+	options = normalizeRouteNeighborhoodOptions(options)
 	iataScopes := iatas
 	if len(iataScopes) == 0 {
 		iataScopes = []string{""}
@@ -666,19 +723,42 @@ func buildRouteNeighborhood(ctx context.Context, reader api.Reader, nodeID uuid.
 	queried := make(map[string]struct{})
 	nodes := make(map[uuid.UUID]*api.ResolvedNode)
 	edges := make(map[string]*routeEdgeAccumulator)
+	stats := routeNeighborhoodBuildStats{}
 
-	for depth := int32(0); depth < maxHops && len(frontier) > 0; depth++ {
+	for depth := int32(0); depth < options.maxHops && len(frontier) > 0; depth++ {
 		next := make(map[uuid.UUID]struct{})
+		nextScores := make(map[uuid.UUID]int64)
+		stopExpansion := false
 		for _, currentID := range frontier {
 			for _, iata := range iataScopes {
+				if stats.queryCount >= maxRouteNeighborhoodQueryCount || stats.sourceRouteCount >= maxRouteNeighborhoodSourceRouteCount {
+					stats.truncated = true
+					stopExpansion = true
+					break
+				}
 				queryKey := currentID.String() + ":" + iata
 				if _, ok := queried[queryKey]; ok {
 					continue
 				}
 				queried[queryKey] = struct{}{}
-				routes, err := reader.GetKnownRoutesByNode(ctx, iata, currentID)
+				queryLimit := options.routeLimit
+				remainingRouteBudget := maxRouteNeighborhoodSourceRouteCount - stats.sourceRouteCount
+				if remainingRouteBudget < int64(queryLimit) {
+					queryLimit = int32(remainingRouteBudget)
+					stats.truncated = true
+				}
+				if queryLimit < 1 {
+					stopExpansion = true
+					break
+				}
+				routes, err := reader.GetKnownRoutesByNode(ctx, iata, currentID, queryLimit)
 				if err != nil {
 					return nil, err
+				}
+				stats.queryCount++
+				stats.sourceRouteCount += int64(len(routes))
+				if len(routes) >= int(queryLimit) {
+					stats.truncated = true
 				}
 				for _, route := range routes {
 					for _, hop := range route.Hops {
@@ -691,26 +771,40 @@ func buildRouteNeighborhood(ctx context.Context, reader api.Reader, nodeID uuid.
 							continue
 						}
 						if idx > 0 {
-							addNeighborhoodEdge(edges, distances, next, route, route.Hops[idx-1], hop, depth)
+							addNeighborhoodEdge(edges, distances, next, nextScores, route, route.Hops[idx-1], hop, depth)
 						}
 						if idx+1 < len(route.Hops) {
-							addNeighborhoodEdge(edges, distances, next, route, hop, route.Hops[idx+1], depth)
+							addNeighborhoodEdge(edges, distances, next, nextScores, route, hop, route.Hops[idx+1], depth)
 						}
 					}
 				}
+			}
+			if stopExpansion {
+				break
 			}
 		}
 		frontier = frontier[:0]
 		for id := range next {
 			frontier = append(frontier, id)
 		}
-		sort.Slice(frontier, func(i, j int) bool { return frontier[i].String() < frontier[j].String() })
+		sort.Slice(frontier, func(i, j int) bool {
+			leftScore := nextScores[frontier[i]]
+			rightScore := nextScores[frontier[j]]
+			if leftScore != rightScore {
+				return leftScore > rightScore
+			}
+			return frontier[i].String() < frontier[j].String()
+		})
+		if len(frontier) > maxRouteNeighborhoodFrontierNodes {
+			stats.truncated = true
+			frontier = frontier[:maxRouteNeighborhoodFrontierNodes]
+		}
 	}
 
 	outNodes := make([]api.RouteNeighborhoodNode, 0, len(nodes))
 	for id, node := range nodes {
 		distance, ok := distances[id]
-		if !ok || distance > maxHops || node == nil || node.Latitude == nil || node.Longitude == nil {
+		if !ok || distance > options.maxHops || node == nil || node.Latitude == nil || node.Longitude == nil {
 			continue
 		}
 		outNodes = append(outNodes, api.RouteNeighborhoodNode{
@@ -765,14 +859,18 @@ func buildRouteNeighborhood(ctx context.Context, reader api.Reader, nodeID uuid.
 	})
 
 	return &api.NodeRouteNeighborhood{
-		NodeID:  nodeID,
-		MaxHops: maxHops,
-		Nodes:   outNodes,
-		Edges:   outEdges,
+		NodeID:           nodeID,
+		MaxHops:          options.maxHops,
+		RouteLimit:       options.routeLimit,
+		QueryCount:       stats.queryCount,
+		SourceRouteCount: stats.sourceRouteCount,
+		Truncated:        stats.truncated,
+		Nodes:            outNodes,
+		Edges:            outEdges,
 	}, nil
 }
 
-func addNeighborhoodEdge(edges map[string]*routeEdgeAccumulator, distances map[uuid.UUID]int32, next map[uuid.UUID]struct{}, route api.KnownRoute, a, b api.RouteHop, depth int32) {
+func addNeighborhoodEdge(edges map[string]*routeEdgeAccumulator, distances map[uuid.UUID]int32, next map[uuid.UUID]struct{}, nextScores map[uuid.UUID]int64, route api.KnownRoute, a, b api.RouteHop, depth int32) {
 	from, to := orderedNodePair(a.NodeID, b.NodeID)
 	key := route.IATA + ":" + from.String() + ":" + to.String()
 	edge := edges[key]
@@ -798,11 +896,15 @@ func addNeighborhoodEdge(edges map[string]*routeEdgeAccumulator, distances map[u
 	}
 
 	for _, id := range []uuid.UUID{a.NodeID, b.NodeID} {
+		if _, queued := next[id]; queued {
+			nextScores[id] += route.ObservationCount
+		}
 		if _, ok := distances[id]; ok {
 			continue
 		}
 		distances[id] = depth + 1
 		next[id] = struct{}{}
+		nextScores[id] += route.ObservationCount
 	}
 }
 

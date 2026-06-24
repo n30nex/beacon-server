@@ -19,7 +19,8 @@ import (
 
 // Client wraps a Redis client with helper methods used by CachedReader.
 type Client struct {
-	rdb *redis.Client
+	rdb     *redis.Client
+	metrics *Metrics
 }
 
 // NewClient creates a new Redis client from the given address, password, and
@@ -33,7 +34,8 @@ func NewClient(addr, password string, db int) *Client {
 		DB:       db,
 	}
 	return &Client{
-		rdb: redis.NewClient(&opts),
+		rdb:     redis.NewClient(&opts),
+		metrics: NewMetrics(),
 	}
 }
 
@@ -87,8 +89,23 @@ func (c *Client) Close() error {
 	return c.rdb.Close()
 }
 
+// MetricsSnapshot returns a copy of cache counters for health/status output.
+func (c *Client) MetricsSnapshot() map[string]CategorySnapshot {
+	if c == nil || c.metrics == nil {
+		return nil
+	}
+	return c.metrics.Snapshot()
+}
+
 func (c *Client) del(ctx context.Context, keys ...string) {
-	c.rdb.Del(ctx, keys...)
+	for _, key := range keys {
+		c.metrics.recordInvalidation(categoryForKey(key))
+	}
+	if err := c.rdb.Del(ctx, keys...).Err(); err != nil {
+		for _, key := range keys {
+			c.metrics.recordError(categoryForKey(key), "delete", 0)
+		}
+	}
 }
 
 // getOrSet retrieves a cached value by key, deserialising it into T.
@@ -99,37 +116,51 @@ func (c *Client) del(ctx context.Context, keys ...string) {
 // with a fresh fetch. Errors from Set are ignored so a Redis hiccup never
 // fails a request.
 func getOrSet[T any](ctx context.Context, c *Client, key string, ttl time.Duration, fetch func() (T, error)) (T, error) {
+	category := categoryForKey(key)
 	raw, err := c.rdb.Get(ctx, key).Bytes()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		// real Redis error, degrade gracefully
+		c.metrics.recordError(category, "get", ttl)
 		return fetch()
 	}
 	var zero, out T
 	if errors.Is(err, redis.Nil) {
 		// cache miss — fetch, store, return
+		c.metrics.recordMiss(category, ttl)
 		val, err := fetch()
 		if err != nil {
+			c.metrics.recordError(category, "fetch", ttl)
 			return zero, err
 		}
 		data, jsonErr := json.Marshal(val)
 		if jsonErr != nil {
+			c.metrics.recordError(category, "marshal", ttl)
 			return val, nil
 		}
-		_ = c.rdb.Set(ctx, key, data, ttl)
+		if err := c.rdb.Set(ctx, key, data, ttl).Err(); err != nil {
+			c.metrics.recordError(category, "set", ttl)
+		}
 		return val, nil
 	}
 	if err = json.Unmarshal(raw, &out); err != nil {
 		// corrupt cache entry — overwrite it
+		c.metrics.recordMiss(category, ttl)
+		c.metrics.recordError(category, "unmarshal", ttl)
 		val, err := fetch()
 		if err != nil {
+			c.metrics.recordError(category, "fetch", ttl)
 			return zero, err
 		}
 		data, jsonErr := json.Marshal(val)
 		if jsonErr != nil {
+			c.metrics.recordError(category, "marshal", ttl)
 			return val, nil
 		}
-		_ = c.rdb.Set(ctx, key, data, ttl)
+		if err := c.rdb.Set(ctx, key, data, ttl).Err(); err != nil {
+			c.metrics.recordError(category, "set", ttl)
+		}
 		return val, nil
 	}
+	c.metrics.recordHit(category, ttl)
 	return out, nil
 }

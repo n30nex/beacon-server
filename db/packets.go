@@ -373,6 +373,16 @@ func (s *Store) InsertObservation(ctx context.Context, o ingest.InsertObservatio
 	if err != nil {
 		return 0, false, err
 	}
+	if _, err := s.pool.Exec(ctx, `
+INSERT INTO observer_iatas (observer_id, iata, first_heard, last_heard, observation_count)
+VALUES ($1, $2, $3, $3, 1)
+ON CONFLICT (observer_id, iata) DO UPDATE SET
+  first_heard = LEAST(observer_iatas.first_heard, EXCLUDED.first_heard),
+  last_heard = GREATEST(observer_iatas.last_heard, EXCLUDED.last_heard),
+  observation_count = observer_iatas.observation_count + 1
+`, o.ObserverID, o.IATA, o.HeardAt); err != nil {
+		return 0, false, err
+	}
 	return row.ID, row.ID != 0, nil
 }
 

@@ -77,6 +77,9 @@ type CacheTTLs struct {
 // using the provided Redis client and TTL configuration. inner is the
 // underlying db.Store that is called on cache misses.
 func NewCachedReader(inner api.Reader, c *Client, ttl CacheTTLs) api.Reader {
+	if c != nil && c.metrics != nil {
+		c.metrics.ConfigureTTLs(ttl)
+	}
 	return &CachedReader{
 		inner: inner,
 		c:     c,
@@ -538,8 +541,8 @@ func (cr *CachedReader) GetTraceByTag(ctx context.Context, tag string, iatas []s
 }
 
 // GetKnownRoutesByNode implements [api.Reader].
-func (cr *CachedReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]api.KnownRoute, error) {
-	return cr.inner.GetKnownRoutesByNode(ctx, iata, nodeID)
+func (cr *CachedReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID, limit int32) ([]api.KnownRoute, error) {
+	return cr.inner.GetKnownRoutesByNode(ctx, iata, nodeID, limit)
 }
 
 // GetCrossIATANeighbors implements [api.Reader].

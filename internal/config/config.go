@@ -24,6 +24,7 @@ type Config struct {
 	Scopes      []ScopeConfig         `yaml:"scopes"`
 	Cache       CacheConfig           `yaml:"cache"`
 	CORS        CORSConfig            `yaml:"cors"`
+	RateLimits  RateLimitConfig       `yaml:"rate_limits"`
 	Background  BackgroundConfig      `yaml:"background"`
 }
 
@@ -65,6 +66,46 @@ type CORSConfig struct {
 	// MaxAge is the number of seconds the browser may cache a preflight
 	// response. Defaults to 300 if omitted.
 	MaxAge int `yaml:"max_age"`
+}
+
+type RateLimitConfig struct {
+	// Disabled turns off application-level request/message rate limiting.
+	Disabled bool `yaml:"disabled"`
+
+	// RESTPerIPPerMinute limits public /api/v1 requests per client IP.
+	// Defaults to 600 if unset.
+	RESTPerIPPerMinute int `yaml:"rest_per_ip_per_minute"`
+
+	// RESTBurst is the token bucket burst for public /api/v1 requests.
+	// Defaults to 120 if unset.
+	RESTBurst int `yaml:"rest_burst"`
+
+	// WebSocketMessagesPerIPPerMinute limits subscribe/unsubscribe messages
+	// per client IP. Pings are not counted. Defaults to 60 if unset.
+	WebSocketMessagesPerIPPerMinute int `yaml:"websocket_messages_per_ip_per_minute"`
+
+	// WebSocketMessageBurst is the token bucket burst for subscribe/unsubscribe
+	// messages. Defaults to 20 if unset.
+	WebSocketMessageBurst int `yaml:"websocket_message_burst"`
+}
+
+func ResolveRateLimits(cfg RateLimitConfig) RateLimitConfig {
+	if cfg.Disabled {
+		return RateLimitConfig{Disabled: true}
+	}
+	if cfg.RESTPerIPPerMinute == 0 {
+		cfg.RESTPerIPPerMinute = 600
+	}
+	if cfg.RESTBurst == 0 {
+		cfg.RESTBurst = 120
+	}
+	if cfg.WebSocketMessagesPerIPPerMinute == 0 {
+		cfg.WebSocketMessagesPerIPPerMinute = 60
+	}
+	if cfg.WebSocketMessageBurst == 0 {
+		cfg.WebSocketMessageBurst = 20
+	}
+	return cfg
 }
 
 // CacheConfig controls Redis caching behaviour.
@@ -135,6 +176,11 @@ type WebSocketConfig struct {
 	// MaxConnectionsPerIP is the maximum number of concurrent WebSocket
 	// connections allowed from a single IP address. Defaults to 5 if not set.
 	MaxConnectionsPerIP int `yaml:"max_connections_per_ip"`
+
+	// AllowedOrigins lists cross-origin browser origins allowed to connect to
+	// /ws. Omit to allow only same-origin WebSocket handshakes. Use ["*"] only
+	// for intentionally public deployments that accept the CSRF risk.
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 // PacketsConfig controls packet retention behaviour.

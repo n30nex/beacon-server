@@ -199,11 +199,14 @@ func (s *Store) GetNodesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UU
 	result := make(map[uuid.UUID]*api.ResolvedNode, len(rows))
 	for _, r := range rows {
 		result[r.ID] = &api.ResolvedNode{
-			ID:        r.ID,
-			Name:      r.Name,
-			PublicKey: hex.EncodeToString(r.PublicKey),
-			Latitude:  r.Latitude,
-			Longitude: r.Longitude,
+			ID:           r.ID,
+			Name:         r.Name,
+			PublicKey:    hex.EncodeToString(r.PublicKey),
+			NodeType:     r.NodeType,
+			NodeTypeName: api.NodeTypeName(r.NodeType),
+			Latitude:     r.Latitude,
+			Longitude:    r.Longitude,
+			IsObserver:   r.IsObserver,
 		}
 	}
 	return result, nil

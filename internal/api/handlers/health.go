@@ -9,13 +9,19 @@ import (
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/MeshCore-Beacon/beacon-server/internal/background"
+	"github.com/MeshCore-Beacon/beacon-server/internal/cache"
 	"github.com/MeshCore-Beacon/beacon-server/internal/ingest"
+	"github.com/MeshCore-Beacon/beacon-server/internal/ratelimit"
 )
 
 type HealthConfig struct {
-	Version      string
-	CacheStatus  string
-	CacheBackend string
+	Version            string
+	CacheStatus        string
+	CacheBackend       string
+	RateLimitSnapshot  func() map[string]ratelimit.Snapshot
+	CacheSnapshot      func() map[string]cache.CategorySnapshot
+	BackgroundSnapshot func() map[string]background.TaskSnapshot
 }
 
 type HealthDependency struct {
@@ -30,13 +36,16 @@ type HealthBroker struct {
 }
 
 type HealthResponse struct {
-	Status       string                      `json:"status"`
-	Ready        bool                        `json:"ready"`
-	Version      string                      `json:"version"`
-	ServerTime   int64                       `json:"serverTime"`
-	Mode         string                      `json:"mode"`
-	Dependencies map[string]HealthDependency `json:"dependencies"`
-	Brokers      []HealthBroker              `json:"brokers"`
+	Status          string                             `json:"status"`
+	Ready           bool                               `json:"ready"`
+	Version         string                             `json:"version"`
+	ServerTime      int64                              `json:"serverTime"`
+	Mode            string                             `json:"mode"`
+	Dependencies    map[string]HealthDependency        `json:"dependencies"`
+	Brokers         []HealthBroker                     `json:"brokers"`
+	RateLimits      map[string]ratelimit.Snapshot      `json:"rateLimits,omitempty"`
+	CacheMetrics    map[string]cache.CategorySnapshot  `json:"cacheMetrics,omitempty"`
+	BackgroundTasks map[string]background.TaskSnapshot `json:"backgroundTasks,omitempty"`
 }
 
 type healthSnapshot struct {
@@ -117,14 +126,50 @@ func respondHealth(w http.ResponseWriter, snap healthSnapshot, cfg HealthConfig,
 		httpStatus = http.StatusServiceUnavailable
 	}
 	respond(w, httpStatus, HealthResponse{
-		Status:       snap.status,
-		Ready:        snap.ready,
-		Version:      cfg.Version,
-		ServerTime:   snap.serverTime,
-		Mode:         mode,
-		Dependencies: snap.dependencies,
-		Brokers:      snap.brokers,
+		Status:          snap.status,
+		Ready:           snap.ready,
+		Version:         cfg.Version,
+		ServerTime:      snap.serverTime,
+		Mode:            mode,
+		Dependencies:    snap.dependencies,
+		Brokers:         snap.brokers,
+		RateLimits:      rateLimitSnapshot(cfg),
+		CacheMetrics:    cacheSnapshot(cfg),
+		BackgroundTasks: backgroundSnapshot(cfg),
 	})
+}
+
+func rateLimitSnapshot(cfg HealthConfig) map[string]ratelimit.Snapshot {
+	if cfg.RateLimitSnapshot == nil {
+		return nil
+	}
+	snapshot := cfg.RateLimitSnapshot()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	return snapshot
+}
+
+func cacheSnapshot(cfg HealthConfig) map[string]cache.CategorySnapshot {
+	if cfg.CacheSnapshot == nil {
+		return nil
+	}
+	snapshot := cfg.CacheSnapshot()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	return snapshot
+}
+
+func backgroundSnapshot(cfg HealthConfig) map[string]background.TaskSnapshot {
+	if cfg.BackgroundSnapshot == nil {
+		return nil
+	}
+	snapshot := cfg.BackgroundSnapshot()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	return snapshot
 }
 
 // HealthHandler godoc

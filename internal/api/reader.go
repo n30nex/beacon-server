@@ -250,9 +250,11 @@ type Reader interface {
 	// GetNodeNeighbors returns the neighbors of a node ordered by most recently seen.
 	GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]NodeNeighbor, error)
 
-	// GetKnownRoutesByNode returns all known routes in a given IATA that contain
-	// the specified node UUID anywhere in their hop sequence.
-	GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]KnownRoute, error)
+	// GetKnownRoutesByNode returns known routes in a given IATA that contain
+	// the specified node UUID anywhere in their hop sequence. Pass limit=0 for
+	// an uncapped read; callers that fan out across route neighborhoods should
+	// pass an explicit limit.
+	GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID, limit int32) ([]KnownRoute, error)
 
 	// GetCrossIATANeighbors returns neighbors of a node that were observed in a
 	// different IATA — indicating a potential cross-IATA radio link.

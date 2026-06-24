@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -29,6 +30,7 @@ import (
 // All endpoints accept an optional iata= filter (case-insensitive).
 func StatsRouter(reader api.Reader) http.Handler {
 	r := chi.NewRouter()
+	r.Get("/home", getStatsHome(reader))
 	r.Get("/summary", getStatsSummary(reader))
 	r.Get("/regions", getStatsRegions(reader))
 	r.Get("/payloads", getStatsPayloads(reader))
@@ -257,6 +259,109 @@ func respondStatsParamError(w http.ResponseWriter, err error) {
 		respondError(w, http.StatusBadRequest, err.Error())
 	default:
 		respondError(w, http.StatusBadRequest, "invalid stats query parameter")
+	}
+}
+
+// getStatsHome godoc
+//
+//	@Summary	Fast Home command center summary
+//	@Tags		Stats
+//	@Produce	json
+//	@Param		iatas	query	string	false	"Comma-separated IATA codes"
+//	@Param		regionId	query	int	false	"Filter by region ID, expands to member IATAs"
+//	@Param		region	query	string	false	"Filter by region slug, expands to member IATAs"
+//	@Param		range	query	string	false	"Window preset: 24h, 7d, or 30d"
+//	@Param		since	query	int	false	"Window start as epoch milliseconds"
+//	@Param		until	query	int	false	"Window end as epoch milliseconds"
+//	@Success	200	{object}	api.StatsHome
+//	@Failure	400	{object}	handlers.APIError
+//	@Failure	500	{object}	handlers.APIError
+//	@Router		/stats/home [get]
+func getStatsHome(reader api.Reader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filter, err := parseStatsFilter(r, reader, 6)
+		if err != nil {
+			respondStatsParamError(w, err)
+			return
+		}
+
+		liveSince := filter.Until.Add(-15 * time.Minute)
+		if liveSince.Before(filter.Since) {
+			liveSince = filter.Since
+		}
+
+		var (
+			overview     *api.StatsOverview
+			live         *api.LiveSummary
+			topNodes     []api.TopNode
+			topObservers []api.TopObserver
+			wg           sync.WaitGroup
+			errs         = make(chan error, 4)
+		)
+
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			result, err := reader.GetStatsOverview(r.Context(), filter.IATAs)
+			if err != nil {
+				errs <- err
+				return
+			}
+			overview = result
+		}()
+		go func() {
+			defer wg.Done()
+			result, err := reader.GetLiveSummary(r.Context(), api.LiveSummaryFilter{IATAs: filter.IATAs, Since: liveSince, Until: filter.Until})
+			if err != nil {
+				errs <- err
+				return
+			}
+			live = result
+		}()
+		go func() {
+			defer wg.Done()
+			result, err := reader.GetStatsTopNodes(r.Context(), filter.IATAs, 5)
+			if err != nil {
+				errs <- err
+				return
+			}
+			topNodes = result
+		}()
+		go func() {
+			defer wg.Done()
+			result, err := reader.GetStatsTopObservers(r.Context(), filter.IATAs, filter.Since, 5)
+			if err != nil {
+				errs <- err
+				return
+			}
+			topObservers = result
+		}()
+		wg.Wait()
+		close(errs)
+
+		for err := range errs {
+			log.Printf("api: GetStatsHome failed: %v", err)
+			respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+
+		out := api.StatsHome{
+			ServerTime:   time.Now().UnixMilli(),
+			Window:       api.StatsWindow{Since: filter.Since.UnixMilli(), Until: filter.Until.UnixMilli(), Bucket: filter.Bucket},
+			TopNodes:     topNodes,
+			TopObservers: topObservers,
+		}
+		if overview != nil {
+			out.Overview = *overview
+		}
+		if live != nil {
+			out.Live = *live
+			out.TopIATAs = live.TopIATAs
+			if len(out.TopIATAs) > 6 {
+				out.TopIATAs = out.TopIATAs[:6]
+			}
+		}
+		respond(w, http.StatusOK, out)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/MeshCore-Beacon/beacon-server/internal/config"
 	"github.com/MeshCore-Beacon/beacon-server/internal/hub"
 	"github.com/MeshCore-Beacon/beacon-server/internal/ingest"
+	"github.com/MeshCore-Beacon/beacon-server/internal/ratelimit"
 	"github.com/MeshCore-Beacon/beacon-server/internal/ws"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
@@ -40,11 +41,35 @@ import (
 //	  /iatas           → iatas subrouter
 //	  /regions         → regions subrouter
 //	  /stats           → stats subrouter
+//	  /netgraph        → render-ready verified-route graph
 //
 // The private group is stubbed and ready for the auth middleware drop-in
 // described in Future Features → Admin authentication.
-func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, maxConnsPerIP int, corsCfg config.CORSConfig, healthCfg handlers.HealthConfig) http.Handler {
+func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.WebSocketConfig, corsCfg config.CORSConfig, rateCfg config.RateLimitConfig, healthCfg handlers.HealthConfig) http.Handler {
 	r := chi.NewRouter()
+	rateCfg = config.ResolveRateLimits(rateCfg)
+	restLimiter := ratelimit.New(ratelimit.Config{
+		RequestsPerMinute: rateCfg.RESTPerIPPerMinute,
+		Burst:             rateCfg.RESTBurst,
+	})
+	wsMessageLimiter := ratelimit.New(ratelimit.Config{
+		RequestsPerMinute: rateCfg.WebSocketMessagesPerIPPerMinute,
+		Burst:             rateCfg.WebSocketMessageBurst,
+	})
+	if rateCfg.Disabled {
+		restLimiter = nil
+		wsMessageLimiter = nil
+	}
+	healthCfg.RateLimitSnapshot = func() map[string]ratelimit.Snapshot {
+		snapshot := map[string]ratelimit.Snapshot{}
+		if restLimiter != nil {
+			snapshot["publicRest"] = restLimiter.Snapshot()
+		}
+		if wsMessageLimiter != nil {
+			snapshot["websocketMessages"] = wsMessageLimiter.Snapshot()
+		}
+		return snapshot
+	}
 
 	// ── CORS ─────────────────────────────────────────────────────────────────
 	allowedOrigins := corsCfg.AllowedOrigins
@@ -89,7 +114,11 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, maxConnsPerIP 
 	))
 
 	// ── WebSocket ────────────────────────────────────────────────────────────
-	r.Get("/ws", ws.Handler(h, reader, maxConnsPerIP))
+	r.Get("/ws", ws.Handler(h, reader, ws.Options{
+		MaxConnectionsPerIP: wsCfg.MaxConnectionsPerIP,
+		AllowedOrigins:      wsCfg.AllowedOrigins,
+		MessageLimiter:      wsMessageLimiter,
+	}))
 	r.Get("/healthz", handlers.HealthHandler(reader, workers, healthCfg))
 	r.Get("/readyz", handlers.ReadinessHandler(reader, workers, healthCfg))
 
@@ -97,6 +126,7 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, maxConnsPerIP 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public group — no authentication required (all of v1 is public).
 		r.Group(func(r chi.Router) {
+			r.Use(mw.RateLimit(restLimiter))
 			r.Mount("/packets", handlers.PacketsRouter(reader))
 			r.Mount("/nodes", handlers.NodesRouter(reader))
 			r.Mount("/brokers", handlers.BrokersRouter(workers))
@@ -108,6 +138,7 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, maxConnsPerIP 
 			r.Mount("/routes", handlers.RoutesRouter(reader))
 			r.Mount("/scopes", handlers.ScopesRouter(reader))
 			r.Mount("/stats", handlers.StatsRouter(reader))
+			r.Mount("/netgraph", handlers.NetgraphRouter(reader))
 			r.Mount("/traces", handlers.TracesRouter(reader))
 			r.Mount("/atlas", handlers.AtlasRouter(reader))
 			r.Mount("/live", handlers.LiveRouter(reader))

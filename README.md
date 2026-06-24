@@ -190,6 +190,29 @@ packets:
 # WebSocket settings.
 websocket:
   max_connections_per_ip: 5 # default: 5
+  # Cross-origin WebSocket origins allowed to connect to /ws.
+  # Omit or leave empty to allow same-origin browser handshakes only.
+  allowed_origins:
+    - "https://beacon.canadaverse.org"
+
+# CORS should be explicit in production. Use ["*"] only when the API is
+# intentionally public read-only.
+cors:
+  allowed_origins:
+    - "https://beacon.canadaverse.org"
+  allowed_methods: [GET, HEAD, OPTIONS]
+  allowed_headers: [Accept, Authorization, Content-Type]
+  allow_credentials: false
+  max_age: 300
+
+# Per-IP token buckets for public read endpoints and WebSocket subscription
+# churn. Pings are excluded from the WebSocket message limit.
+rate_limits:
+  disabled: false
+  rest_per_ip_per_minute: 600
+  rest_burst: 120
+  websocket_messages_per_ip_per_minute: 60
+  websocket_message_burst: 20
 
 # Redis caching layer (optional).
 # Caches read-heavy, slow-changing responses to reduce PostgreSQL load.
@@ -224,9 +247,11 @@ not auto-created.
 
 ## Authentication
 
-API authentication is not yet implemented. Beacon is intended for trusted
-internal network or reverse-proxy deployments. Do not expose it directly to the
-public internet without an authentication layer in front of it.
+API authentication is not yet implemented. Current `/api/v1`, `/ws`,
+`/healthz`, `/readyz`, and `/swagger` routes are public read-only surfaces by
+policy. Deployments must set explicit CORS and WebSocket origin configuration,
+and should keep any future admin/write routes behind the private route group.
+See `docs/security-model.md` for the current public/private contract.
 
 ---
 
@@ -353,6 +378,11 @@ all subscriptions, and backfill via REST using
 By default a maximum of 5 concurrent WebSocket connections are allowed per IP
 address. Connections beyond this limit receive `HTTP 429`. The limit is
 configurable via `websocket.max_connections_per_ip` in `config.yaml`.
+Cross-origin browser connections are rejected unless the origin is same-host or
+matches `websocket.allowed_origins`.
+Subscribe/unsubscribe churn is rate-limited per IP via
+`rate_limits.websocket_messages_per_ip_per_minute`; pings do not count against
+that bucket.
 
 ---
 
@@ -367,6 +397,19 @@ for full parameter documentation.
 ### Authentication
 
 Not yet implemented — see the Authentication section above.
+
+### Rate limits
+
+Public `/api/v1` reads are rate-limited per IP with a token bucket configured
+under `rate_limits`. The default is `600` requests per minute with a burst of
+`120`. Exceeding the bucket returns `HTTP 429` with `Retry-After: 60`.
+
+Public Caddy deployments add an edge bucket before requests reach the server.
+`beacon-web/docker/docker-compose.yml` builds a Caddy image with
+`github.com/mholt/caddy-ratelimit@v0.1.0`; `Caddyfile.proxy` applies per-IP
+limits for `/api*`, `/healthz*`, `/readyz*`, and `/ws*`. Tune the
+`CADDY_API_RATE_LIMIT_*`, `CADDY_HEALTH_RATE_LIMIT_*`, and
+`CADDY_WS_RATE_LIMIT_*` environment variables for the public host.
 
 ### Endpoints
 

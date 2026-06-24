@@ -47,10 +47,14 @@ type RouteNeighborhoodEdge struct {
 
 // NodeRouteNeighborhood is a verified local route graph around a selected node.
 type NodeRouteNeighborhood struct {
-	NodeID  uuid.UUID               `json:"nodeId"`
-	MaxHops int32                   `json:"maxHops"`
-	Nodes   []RouteNeighborhoodNode `json:"nodes"`
-	Edges   []RouteNeighborhoodEdge `json:"edges"`
+	NodeID           uuid.UUID               `json:"nodeId"`
+	MaxHops          int32                   `json:"maxHops"`
+	RouteLimit       int32                   `json:"routeLimit"`
+	QueryCount       int64                   `json:"queryCount"`
+	SourceRouteCount int64                   `json:"sourceRouteCount"`
+	Truncated        bool                    `json:"truncated"`
+	Nodes            []RouteNeighborhoodNode `json:"nodes"`
+	Edges            []RouteNeighborhoodEdge `json:"edges"`
 }
 
 // CrossIATAHop represents the boundary hop between two IATAs in a cross-IATA route.

@@ -7,7 +7,8 @@
 
 set -euo pipefail
 
-PACKAGE="./cmd/beacon"
+API_PACKAGE="./cmd/beacon"
+WEB_PACKAGE="./cmd/beacon-web"
 OUTPUT_DIR="binaries"
 VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -34,17 +35,24 @@ for target in "${targets[@]}"; do
         NAME="${NAME}v${GOARM}"
     fi
 
+    API_NAME="${NAME}"
+    WEB_NAME="beacon-web-${VERSION}-${GOOS}-${GOARCH}${GOARM:+v$GOARM}"
+    EXT=""
     if [[ "$GOOS" == "windows" ]]; then
-        NAME="${NAME}.exe"
+        EXT=".exe"
     fi
 
     printf "  %-40s" "${GOOS}/${GOARCH}${GOARM:+v$GOARM}"
 
     env GOOS="$GOOS" GOARCH="$GOARCH" ${GOARM:+GOARM="$GOARM"} \
         go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
-        -o "${OUTPUT_DIR}/${NAME}" "$PACKAGE"
+        -o "${OUTPUT_DIR}/${API_NAME}${EXT}" "$API_PACKAGE"
 
-    echo "→ ${OUTPUT_DIR}/${NAME}"
+    env GOOS="$GOOS" GOARCH="$GOARCH" ${GOARM:+GOARM="$GOARM"} \
+        go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+        -o "${OUTPUT_DIR}/${WEB_NAME}${EXT}" "$WEB_PACKAGE"
+
+    echo "→ ${OUTPUT_DIR}/${API_NAME}${EXT}, ${OUTPUT_DIR}/${WEB_NAME}${EXT}"
 done
 
 echo "Done."

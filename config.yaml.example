@@ -74,18 +74,32 @@ packets:
 
 websocket:
   max_connections_per_ip: 5 # default: 5
+  # Cross-origin WebSocket origins allowed to connect to /ws.
+  # Omit or leave empty to allow same-origin browser handshakes only.
+  # Use ["*"] only for intentionally public deployments that accept the CSRF risk.
+  allowed_origins:
+    - "https://beacon.canadaverse.org"
 
 # CORS configuration.
 # Controls which origins, methods and headers are allowed for cross-origin requests.
-# Defaults to allowing all origins with GET/HEAD/OPTIONS if omitted — appropriate
-# for a public read-only API. Restrict allowed_origins if you expose write endpoints.
-#cors:
-#  allowed_origins:
-#    - "https://app.example.com"
-#  allowed_methods: [GET, HEAD, OPTIONS, POST]
-#  allowed_headers: [Accept, Authorization, Content-Type]
-#  allow_credentials: false
-#  max_age: 300
+# Keep this explicit in production so public exposure is a deployment decision,
+# not an implicit library default. Use ["*"] only for public read-only APIs.
+cors:
+  allowed_origins:
+    - "https://beacon.canadaverse.org"
+  allowed_methods: [GET, HEAD, OPTIONS]
+  allowed_headers: [Accept, Authorization, Content-Type]
+  allow_credentials: false
+  max_age: 300
+
+# Public read abuse controls. These are application-level per-IP token buckets.
+# Reverse proxies may add stricter limits at the edge.
+rate_limits:
+  disabled: false
+  rest_per_ip_per_minute: 600
+  rest_burst: 120
+  websocket_messages_per_ip_per_minute: 60 # subscribe/unsubscribe messages; pings are excluded
+  websocket_message_burst: 20
 
 # Redis caching layer.
 # If REDIS_ADDR is not set, caching is disabled and all reads go directly to PostgreSQL.

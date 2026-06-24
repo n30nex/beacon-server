@@ -100,79 +100,132 @@ func (s *Store) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*a
 		Window:     statsWindow(filter),
 	}
 
-	overview, err := s.getStatsOverviewWindow(ctx, filter, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	summary.Overview = overview
-
 	liveSince := filter.Until.Add(-15 * time.Minute)
 	if liveSince.Before(filter.Since) {
 		liveSince = filter.Since
 	}
-	live, err := s.GetLiveSummary(ctx, api.LiveSummaryFilter{IATAs: filter.IATAs, Since: liveSince, Until: filter.Until})
-	if err != nil {
+	var (
+		overview     api.StatsOverview
+		live         *api.LiveSummary
+		nodeTypes    []api.NodeTypeCount
+		payloads     *api.StatsPayloads
+		topIATAs     []api.LiveIATACount
+		topObservers []api.TopObserver
+		topNodes     []api.TopNode
+		presets      []api.RadioPreset
+		scopes       []api.ScopeStats
+		health       *api.StatsObserverHealthResponse
+	)
+	if err := runStoreParallelTasks(ctx,
+		storeParallelTask{
+			name: "stats overview",
+			run: func(ctx context.Context) error {
+				var err error
+				overview, err = s.getStatsOverviewWindow(ctx, filter, iataFilter)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats live summary",
+			run: func(ctx context.Context) error {
+				var err error
+				live, err = s.GetLiveSummary(ctx, api.LiveSummaryFilter{IATAs: filter.IATAs, Since: liveSince, Until: filter.Until})
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats node types",
+			run: func(ctx context.Context) error {
+				var err error
+				nodeTypes, err = s.GetStatsNodeTypes(ctx, filter.IATAs)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats payloads",
+			run: func(ctx context.Context) error {
+				var err error
+				payloads, err = s.GetStatsPayloads(ctx, filter)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats top iatas",
+			run: func(ctx context.Context) error {
+				var err error
+				topIATAs, err = s.getStatsTopIATAs(ctx, filter, iataFilter)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats top observers",
+			run: func(ctx context.Context) error {
+				var err error
+				topObservers, err = s.getStatsTopObserversWindow(ctx, filter, iataFilter, 10)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats top nodes",
+			run: func(ctx context.Context) error {
+				var err error
+				topNodes, err = s.getStatsTopNodesWindow(ctx, filter, iataFilter, 10)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats radio presets",
+			run: func(ctx context.Context) error {
+				var err error
+				presets, err = s.GetRadioPresets(ctx, "", filter.IATAs)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats scopes",
+			run: func(ctx context.Context) error {
+				var err error
+				scopes, err = s.GetScopeStats(ctx)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "stats observer health",
+			run: func(ctx context.Context) error {
+				var err error
+				health, err = s.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
+					StatsFilter: api.StatsFilter{
+						IATAs:  filter.IATAs,
+						Since:  filter.Since,
+						Until:  filter.Until,
+						Bucket: filter.Bucket,
+						Limit:  500,
+					},
+					StaleAfter: statsDefaultStaleAfter,
+				})
+				return err
+			},
+		},
+	); err != nil {
 		return nil, err
 	}
-	summary.Live = *live
-
-	nodeTypes, err := s.GetStatsNodeTypes(ctx, filter.IATAs)
-	if err != nil {
-		return nil, err
+	summary.Overview = overview
+	if live != nil {
+		summary.Live = *live
 	}
 	summary.NodeTypes = nodeTypes
-
-	payloads, err := s.GetStatsPayloads(ctx, filter)
-	if err != nil {
-		return nil, err
-	}
-	summary.PayloadMix = payloads.Totals
-	summary.RouteMix = payloads.RouteTotals
-
-	topIATAs, err := s.getStatsTopIATAs(ctx, filter, iataFilter)
-	if err != nil {
-		return nil, err
+	if payloads != nil {
+		summary.PayloadMix = payloads.Totals
+		summary.RouteMix = payloads.RouteTotals
 	}
 	summary.TopIATAs = topIATAs
-
-	topObservers, err := s.getStatsTopObserversWindow(ctx, filter, iataFilter, 10)
-	if err != nil {
-		return nil, err
-	}
 	summary.TopObservers = topObservers
-
-	topNodes, err := s.getStatsTopNodesWindow(ctx, filter, iataFilter, 10)
-	if err != nil {
-		return nil, err
-	}
 	summary.TopNodes = topNodes
-
-	presets, err := s.GetRadioPresets(ctx, "", filter.IATAs)
-	if err != nil {
-		return nil, err
-	}
 	summary.RadioPresets = presets
-
-	scopes, err := s.GetScopeStats(ctx)
-	if err != nil {
-		return nil, err
-	}
 	summary.Scopes = scopes
-
-	health, err := s.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
-		StatsFilter: api.StatsFilter{
-			IATAs:  filter.IATAs,
-			Since:  filter.Since,
-			Until:  filter.Until,
-			Bucket: filter.Bucket,
-			Limit:  500,
-		},
-		StaleAfter: statsDefaultStaleAfter,
-	})
-	if err != nil {
-		return nil, err
+	if health != nil {
+		summary.Health = health.Summary
 	}
-	summary.Health = health.Summary
 
 	return summary, nil
 }
@@ -230,19 +283,33 @@ LIMIT 12`, filter.Since, filter.Until, iataFilter)
 
 func (s *Store) getStatsTopObserversWindow(ctx context.Context, filter api.StatsFilter, iataFilter string, limit int32) ([]api.TopObserver, error) {
 	rows, err := s.pool.Query(ctx, `
+WITH window_counts AS MATERIALIZED (
+  SELECT po.observer_id, COUNT(*)::bigint AS observation_count
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.observer_id
+),
+latest_iata AS (
+  SELECT DISTINCT ON (oi.observer_id)
+    oi.observer_id,
+    oi.iata
+  FROM observer_iatas oi
+  JOIN window_counts wc ON wc.observer_id = oi.observer_id
+  WHERE ($3::text = '' OR oi.iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY oi.observer_id, oi.last_heard DESC
+)
 SELECT
-  po.observer_id,
+  o.id,
   o.display_name,
   o.observer_type,
-  (array_agg(po.iata ORDER BY po.heard_at DESC))[1] AS latest_iata,
-  COUNT(*)::bigint
-FROM packet_observations po
-JOIN observers o ON o.id = po.observer_id
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY po.observer_id, o.display_name, o.observer_type
-ORDER BY COUNT(*) DESC, latest_iata ASC
+  COALESCE(li.iata, '') AS latest_iata,
+  wc.observation_count
+FROM window_counts wc
+JOIN observers o ON o.id = wc.observer_id
+LEFT JOIN latest_iata li ON li.observer_id = wc.observer_id
+ORDER BY wc.observation_count DESC, latest_iata ASC
 LIMIT $4`, filter.Since, filter.Until, iataFilter, limit)
 	if err != nil {
 		return nil, err
@@ -261,21 +328,30 @@ LIMIT $4`, filter.Since, filter.Until, iataFilter, limit)
 
 func (s *Store) getStatsTopNodesWindow(ctx context.Context, filter api.StatsFilter, iataFilter string, limit int32) ([]api.TopNode, error) {
 	rows, err := s.pool.Query(ctx, `
+WITH node_counts AS (
+  SELECT
+    p.origin_pubkey,
+    po.iata,
+    COUNT(*)::bigint AS observation_count,
+    MAX(po.heard_at)::timestamptz AS last_heard
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND p.origin_pubkey IS NOT NULL
+  GROUP BY p.origin_pubkey, po.iata
+)
 SELECT
   n.id,
   n.name,
   n.node_type,
-  po.iata,
-  COUNT(*)::bigint,
-  MAX(po.heard_at)
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-JOIN nodes n ON n.public_key = p.origin_pubkey
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY n.id, n.name, n.node_type, po.iata
-ORDER BY COUNT(*) DESC, MAX(po.heard_at) DESC
+  nc.iata,
+  nc.observation_count,
+  nc.last_heard
+FROM node_counts nc
+JOIN nodes n ON n.public_key = nc.origin_pubkey
+ORDER BY nc.observation_count DESC, nc.last_heard DESC
 LIMIT $4`, filter.Since, filter.Until, iataFilter, limit)
 	if err != nil {
 		return nil, err
@@ -484,117 +560,84 @@ func (s *Store) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) (*
 		Window:     statsWindow(filter),
 	}
 
-	payloadRows, err := s.pool.Query(ctx, `
-SELECT p.payload_type, COUNT(*)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY p.payload_type
-ORDER BY COUNT(*) DESC, p.payload_type ASC`, filter.Since, filter.Until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	for payloadRows.Next() {
-		var item api.PayloadBreakdownItem
-		if err := payloadRows.Scan(&item.PayloadType, &item.Count); err != nil {
-			payloadRows.Close()
-			return nil, err
-		}
-		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
-		response.Totals = append(response.Totals, item)
-	}
-	payloadRows.Close()
-	if err := payloadRows.Err(); err != nil {
-		return nil, err
-	}
-
-	routeRows, err := s.pool.Query(ctx, `
-SELECT p.route_type, COUNT(*)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY p.route_type
-ORDER BY COUNT(*) DESC, p.route_type ASC`, filter.Since, filter.Until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	for routeRows.Next() {
-		var item api.LiveRouteMixItem
-		if err := routeRows.Scan(&item.RouteType, &item.Count); err != nil {
-			routeRows.Close()
-			return nil, err
-		}
-		item.RouteTypeName = api.RouteTypeName(item.RouteType)
-		response.RouteTotals = append(response.RouteTotals, item)
-	}
-	routeRows.Close()
-	if err := routeRows.Err(); err != nil {
-		return nil, err
-	}
-
-	payloadTimeline, err := s.pool.Query(ctx, `
+	rows, err := s.pool.Query(ctx, `
 SELECT
-  to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
-  p.payload_type,
-  COUNT(*)::bigint
+  CASE
+    WHEN GROUPING(b.bucket) = 1 AND GROUPING(p.route_type) = 1 THEN 'payload_total'
+    WHEN GROUPING(b.bucket) = 1 AND GROUPING(p.payload_type) = 1 THEN 'route_total'
+    WHEN GROUPING(p.route_type) = 1 THEN 'payload_timeline'
+    ELSE 'route_timeline'
+  END AS kind,
+  b.bucket,
+  CASE WHEN GROUPING(p.route_type) = 1 THEN p.payload_type ELSE p.route_type END AS code,
+  COUNT(*)::bigint AS count
 FROM packet_observations po
 JOIN packets p ON p.packet_hash = po.packet_hash
+CROSS JOIN LATERAL (
+  SELECT to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket
+) b
 WHERE po.heard_at >= $1
   AND po.heard_at <= $2
   AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY bucket, p.payload_type
-ORDER BY bucket ASC, COUNT(*) DESC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket))
+GROUP BY GROUPING SETS ((p.payload_type), (p.route_type), (b.bucket, p.payload_type), (b.bucket, p.route_type))
+ORDER BY
+  CASE
+    WHEN GROUPING(b.bucket) = 1 AND GROUPING(p.route_type) = 1 THEN 1
+    WHEN GROUPING(b.bucket) = 1 AND GROUPING(p.payload_type) = 1 THEN 2
+    WHEN GROUPING(p.route_type) = 1 THEN 3
+    ELSE 4
+  END,
+  b.bucket ASC NULLS FIRST,
+  count DESC,
+  code ASC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	for payloadTimeline.Next() {
-		var item api.StatsPayloadBucket
-		var bucket time.Time
-		if err := payloadTimeline.Scan(&bucket, &item.PayloadType, &item.Count); err != nil {
-			payloadTimeline.Close()
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var bucket *time.Time
+		var code int16
+		var count int64
+		if err := rows.Scan(&kind, &bucket, &code, &count); err != nil {
 			return nil, err
 		}
-		item.T = bucket.UnixMilli()
-		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
-		response.PayloadTimeline = append(response.PayloadTimeline, item)
-	}
-	payloadTimeline.Close()
-	if err := payloadTimeline.Err(); err != nil {
-		return nil, err
-	}
-
-	routeTimeline, err := s.pool.Query(ctx, `
-SELECT
-  to_timestamp(floor(extract(epoch from po.heard_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,
-  p.route_type,
-  COUNT(*)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY bucket, p.route_type
-ORDER BY bucket ASC, COUNT(*) DESC`, filter.Since, filter.Until, iataFilter, bucketHours(filter.Bucket))
-	if err != nil {
-		return nil, err
-	}
-	for routeTimeline.Next() {
-		var item api.StatsRouteBucket
-		var bucket time.Time
-		if err := routeTimeline.Scan(&bucket, &item.RouteType, &item.Count); err != nil {
-			routeTimeline.Close()
-			return nil, err
+		switch kind {
+		case "payload_total":
+			response.Totals = append(response.Totals, api.PayloadBreakdownItem{
+				PayloadType:     code,
+				PayloadTypeName: api.PayloadTypeName(code),
+				Count:           count,
+			})
+		case "route_total":
+			response.RouteTotals = append(response.RouteTotals, api.LiveRouteMixItem{
+				RouteType:     code,
+				RouteTypeName: api.RouteTypeName(code),
+				Count:         count,
+			})
+		case "payload_timeline":
+			if bucket == nil {
+				continue
+			}
+			response.PayloadTimeline = append(response.PayloadTimeline, api.StatsPayloadBucket{
+				T:               bucket.UnixMilli(),
+				PayloadType:     code,
+				PayloadTypeName: api.PayloadTypeName(code),
+				Count:           count,
+			})
+		case "route_timeline":
+			if bucket == nil {
+				continue
+			}
+			response.RouteTimeline = append(response.RouteTimeline, api.StatsRouteBucket{
+				T:             bucket.UnixMilli(),
+				RouteType:     code,
+				RouteTypeName: api.RouteTypeName(code),
+				Count:         count,
+			})
 		}
-		item.T = bucket.UnixMilli()
-		item.RouteTypeName = api.RouteTypeName(item.RouteType)
-		response.RouteTimeline = append(response.RouteTimeline, item)
 	}
-	routeTimeline.Close()
-	if err := routeTimeline.Err(); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -1977,13 +2020,13 @@ func (s *Store) GetStatsObserverHealth(ctx context.Context, filter api.StatsObse
 
 	rows, err := s.pool.Query(ctx, `
 WITH latest_iata AS (
-  SELECT DISTINCT ON (po.observer_id)
-    po.observer_id,
-    po.iata,
-    po.heard_at
-  FROM packet_observations po
-  WHERE ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  ORDER BY po.observer_id, po.heard_at DESC
+  SELECT DISTINCT ON (oi.observer_id)
+    oi.observer_id,
+    oi.iata,
+    oi.last_heard AS heard_at
+  FROM observer_iatas oi
+  WHERE ($3::text = '' OR oi.iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY oi.observer_id, oi.last_heard DESC
 ),
 window_counts AS (
   SELECT po.observer_id, COUNT(*)::bigint AS observation_count
@@ -2121,14 +2164,14 @@ WITH selected AS (
   SELECT unnest(string_to_array($5::text, ',')::uuid[]) AS observer_id
 ),
 latest_iata AS (
-  SELECT DISTINCT ON (po.observer_id)
-    po.observer_id,
-    po.iata,
-    po.heard_at
-  FROM packet_observations po
-  JOIN selected s ON s.observer_id = po.observer_id
-  WHERE ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  ORDER BY po.observer_id, po.heard_at DESC
+  SELECT DISTINCT ON (oi.observer_id)
+    oi.observer_id,
+    oi.iata,
+    oi.last_heard AS heard_at
+  FROM observer_iatas oi
+  JOIN selected s ON s.observer_id = oi.observer_id
+  WHERE ($3::text = '' OR oi.iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY oi.observer_id, oi.last_heard DESC
 ),
 window_counts AS (
   SELECT
@@ -2619,12 +2662,12 @@ func (s *Store) getStatsRFSeries(ctx context.Context, filter api.StatsObserverHe
 	iataFilter := statsIATAFilter(filter.IATAs)
 	rows, err := s.pool.Query(ctx, `
 WITH latest_iata AS (
-  SELECT DISTINCT ON (po.observer_id)
-    po.observer_id,
-    po.iata
-  FROM packet_observations po
-  WHERE ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  ORDER BY po.observer_id, po.heard_at DESC
+  SELECT DISTINCT ON (oi.observer_id)
+    oi.observer_id,
+    oi.iata
+  FROM observer_iatas oi
+  WHERE ($3::text = '' OR oi.iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY oi.observer_id, oi.last_heard DESC
 )
 SELECT
   to_timestamp(floor(extract(epoch from ot.reported_at) / ($4::double precision * 3600)) * ($4::double precision * 3600)) AS bucket,

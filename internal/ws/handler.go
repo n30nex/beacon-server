@@ -35,6 +35,7 @@ import (
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/MeshCore-Beacon/beacon-server/internal/hub"
+	"github.com/MeshCore-Beacon/beacon-server/internal/ratelimit"
 )
 
 const (
@@ -42,9 +43,20 @@ const (
 	writeTimeout = 10 * time.Second // TODO: apply per-write deadline once nhooyr supports it cleanly
 )
 
+type Options struct {
+	MaxConnectionsPerIP int
+	AllowedOrigins      []string
+	MessageLimiter      *ratelimit.Limiter
+}
+
 // Handler returns an http.HandlerFunc that requires the hub to be injected.
 // Wire it via router.New(h) so the hub is available at startup.
-func Handler(h *hub.Hub, reader api.Reader, maxConnsPerIP int) http.HandlerFunc {
+func Handler(h *hub.Hub, reader api.Reader, opts Options) http.HandlerFunc {
+	maxConnsPerIP := opts.MaxConnectionsPerIP
+	if maxConnsPerIP == 0 {
+		maxConnsPerIP = 5
+	}
+	acceptOptions := acceptOptions(opts.AllowedOrigins)
 	limiter := newIPLimiter(maxConnsPerIP)
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := r.RemoteAddr
@@ -57,7 +69,7 @@ func Handler(h *hub.Hub, reader api.Reader, maxConnsPerIP int) http.HandlerFunc 
 			return
 		}
 		defer limiter.release(ip)
-		conn, err := websocket.Accept(w, r, nil)
+		conn, err := websocket.Accept(w, r, acceptOptions)
 		if err != nil {
 			log.Printf("ws: failed to accept connection: %v", err)
 			return
@@ -140,9 +152,32 @@ func Handler(h *hub.Hub, reader api.Reader, maxConnsPerIP int) http.HandlerFunc 
 				log.Printf("ws[%s]: read error: %v", connID, err)
 				return
 			}
-			handleClientMessage(ctx, client, reader, h, conn, connID, msgBytes)
+			msg, err := parseClientMessage(msgBytes)
+			if err != nil {
+				log.Printf("ws[%s]: bad message: %v", connID, err)
+				continue
+			}
+			if isRateLimitedMessage(msg) && opts.MessageLimiter != nil && !opts.MessageLimiter.Allow(ip) {
+				log.Printf("ws[%s]: subscription message rate limit reached for IP %s", connID, ip)
+				if err := writeError(ctx, conn, msg.ID, "rate_limited", "too many websocket subscription updates"); err != nil {
+					log.Printf("ws[%s]: failed to send rate limit error: %v", connID, err)
+					return
+				}
+				continue
+			}
+			handleClientMessage(ctx, client, reader, h, conn, connID, msg)
 		}
 	}
+}
+
+func acceptOptions(allowedOrigins []string) *websocket.AcceptOptions {
+	if len(allowedOrigins) == 0 {
+		return nil
+	}
+	if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
+		return &websocket.AcceptOptions{InsecureSkipVerify: true}
+	}
+	return &websocket.AcceptOptions{OriginPatterns: allowedOrigins}
 }
 
 // clientMessage is the shape of every client → server message.
@@ -166,14 +201,20 @@ type subscribeScope struct {
 	Events        []hub.EventType `json:"events"`
 }
 
-// handleClientMessage dispatches a parsed client message.
-func handleClientMessage(ctx context.Context, client *hub.Client, reader api.Reader, h *hub.Hub, conn *websocket.Conn, connID string, raw []byte) {
+func parseClientMessage(raw []byte) (clientMessage, error) {
 	var msg clientMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
-		log.Printf("ws[%s]: bad message: %v", connID, err)
-		return
+		return clientMessage{}, err
 	}
+	return msg, nil
+}
 
+func isRateLimitedMessage(msg clientMessage) bool {
+	return msg.Type == "subscribe" || msg.Type == "unsubscribe"
+}
+
+// handleClientMessage dispatches a parsed client message.
+func handleClientMessage(ctx context.Context, client *hub.Client, reader api.Reader, h *hub.Hub, conn *websocket.Conn, connID string, msg clientMessage) {
 	switch msg.Type {
 	case "subscribe":
 		if msg.Scope == nil {
@@ -242,4 +283,15 @@ func handleClientMessage(ctx context.Context, client *hub.Client, reader api.Rea
 	default:
 		log.Printf("ws[%s]: unknown message type %q", connID, msg.Type)
 	}
+}
+
+func writeError(ctx context.Context, conn *websocket.Conn, id, code, message string) error {
+	reply, _ := json.Marshal(map[string]any{
+		"v":       1,
+		"type":    "error",
+		"id":      id,
+		"code":    code,
+		"message": message,
+	})
+	return conn.Write(ctx, websocket.MessageText, reply)
 }

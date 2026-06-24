@@ -5,6 +5,7 @@ package background
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -18,16 +19,20 @@ func ViewRefreshTask(store *db.Store, interval time.Duration) Task {
 		Name:     "view_refresh",
 		Interval: interval,
 		Run: func(ctx context.Context) error {
+			var errs []error
 			if err := store.RefreshHourlyStats(ctx); err != nil {
 				log.Printf("background[view_refresh]: hourly stats: %v", err)
+				errs = append(errs, fmt.Errorf("hourly stats: %w", err))
 			}
 			if err := store.RefreshTopNodes(ctx); err != nil {
 				log.Printf("background[view_refresh]: top nodes: %v", err)
+				errs = append(errs, fmt.Errorf("top nodes: %w", err))
 			}
 			if err := store.RefreshRadioPresets(ctx); err != nil {
 				log.Printf("background[view_refresh]: radio presets: %v", err)
+				errs = append(errs, fmt.Errorf("radio presets: %w", err))
 			}
-			return nil
+			return errors.Join(errs...)
 		},
 	}
 }

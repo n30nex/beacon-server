@@ -171,6 +171,10 @@ type NodeReach struct {
 	ReachableNodes   int64                `json:"reachableNodes"`
 	VerifiedEdges    int64                `json:"verifiedEdges"`
 	RouteCount       int64                `json:"routeCount"`
+	SourceRouteCount int64                `json:"sourceRouteCount"`
+	QueryCount       int64                `json:"queryCount"`
+	RouteLimit       int32                `json:"routeLimit"`
+	Truncated        bool                 `json:"truncated"`
 	ObservationCount int64                `json:"observationCount"`
 	HopBuckets       []NodeReachHopBucket `json:"hopBuckets"`
 	TopNodes         []NodeReachNode      `json:"topNodes"`

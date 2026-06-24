@@ -45,6 +45,7 @@ var searchablePages = []searchPage{
 	{"Nodes", "Node directory", "/?tab=Nodes"},
 	{"Observers", "Observer fleet", "/?tab=Observers"},
 	{"Routes", "Known route catalogue", "/?tab=Routes"},
+	{"Netgraph", "3D route topology explorer", "/?tab=Netgraph"},
 	{"Traces", "Trace and ping series", "/?tab=Traces"},
 	{"Stats", "Analytics and RF health", "/?tab=Stats"},
 }

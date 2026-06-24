@@ -137,6 +137,18 @@ type StatsSummary struct {
 	Health       StatsHealthSummary     `json:"health"`
 }
 
+// StatsHome is the compact, fast payload used by the Home command center.
+// It intentionally omits the heavier analytics series from StatsSummary.
+type StatsHome struct {
+	ServerTime   int64           `json:"serverTime"`
+	Window       StatsWindow     `json:"window"`
+	Overview     StatsOverview   `json:"overview"`
+	Live         LiveSummary     `json:"live"`
+	TopIATAs     []LiveIATACount `json:"topIatas"`
+	TopObservers []TopObserver   `json:"topObservers"`
+	TopNodes     []TopNode       `json:"topNodes"`
+}
+
 // StatsTrendPoint is a bucketed activity point for a region/IATA row.
 type StatsTrendPoint struct {
 	T                int64 `json:"t"`

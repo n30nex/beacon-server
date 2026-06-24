@@ -77,11 +77,14 @@ type ResolvedHop struct {
 
 // ResolvedNode is a node reference within a resolved path hop.
 type ResolvedNode struct {
-	ID        uuid.UUID `json:"id"`
-	Name      *string   `json:"name,omitempty"`
-	PublicKey string    `json:"publicKey"` // hex-encoded prefix used for resolution
-	Latitude  *float64  `json:"latitude,omitempty"`
-	Longitude *float64  `json:"longitude,omitempty"`
+	ID           uuid.UUID `json:"id"`
+	Name         *string   `json:"name,omitempty"`
+	PublicKey    string    `json:"publicKey"` // hex-encoded prefix used for resolution
+	NodeType     int16     `json:"nodeType,omitempty"`
+	NodeTypeName string    `json:"nodeTypeName,omitempty"`
+	Latitude     *float64  `json:"latitude,omitempty"`
+	Longitude    *float64  `json:"longitude,omitempty"`
+	IsObserver   bool      `json:"isObserver,omitempty"`
 }
 
 // ResolvedPathEntry is an internal type used by the store layer to carry node

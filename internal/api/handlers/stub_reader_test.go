@@ -248,7 +248,7 @@ func (stubReader) GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]api
 	return nil, nil
 }
 
-func (stubReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]api.KnownRoute, error) {
+func (stubReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID, limit int32) ([]api.KnownRoute, error) {
 	return nil, nil
 }
 

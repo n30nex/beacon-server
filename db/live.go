@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -199,131 +200,133 @@ func (s *Store) GetLiveSummary(ctx context.Context, filter api.LiveSummaryFilter
 		Until:      until.UnixMilli(),
 	}
 
+	var payloadMixJSON, routeMixJSON, topIATAsJSON, topObserversJSON []byte
 	err := s.pool.QueryRow(ctx, `
+WITH base AS MATERIALIZED (
+  SELECT
+    po.id,
+    po.packet_hash,
+    po.observer_id,
+    po.iata,
+    p.payload_type,
+    p.route_type
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+),
+summary AS (
+  SELECT
+    COALESCE(MAX(id), 0)::bigint AS latest_observation_id,
+    COUNT(DISTINCT packet_hash)::bigint AS packet_count,
+    COUNT(*)::bigint AS observation_count,
+    COUNT(DISTINCT observer_id)::bigint AS active_observers
+  FROM base
+),
+payload_mix AS (
+  SELECT payload_type, COUNT(*)::bigint AS observation_count
+  FROM base
+  GROUP BY payload_type
+  ORDER BY observation_count DESC, payload_type ASC
+  LIMIT 8
+),
+route_mix AS (
+  SELECT route_type, COUNT(*)::bigint AS observation_count
+  FROM base
+  GROUP BY route_type
+  ORDER BY observation_count DESC, route_type ASC
+),
+iata_mix AS (
+  SELECT iata, COUNT(*)::bigint AS observation_count
+  FROM base
+  GROUP BY iata
+  ORDER BY observation_count DESC, iata ASC
+  LIMIT 8
+),
+observer_counts AS (
+  SELECT
+    b.observer_id,
+    o.display_name,
+    o.observer_type,
+    (array_agg(b.iata ORDER BY b.id DESC))[1] AS latest_iata,
+    COUNT(*)::bigint AS observation_count
+  FROM base b
+  LEFT JOIN observers o ON o.id = b.observer_id
+  GROUP BY b.observer_id, o.display_name, o.observer_type
+),
+observer_mix AS (
+  SELECT observer_id, display_name, observer_type, latest_iata, observation_count
+  FROM observer_counts
+  ORDER BY observation_count DESC, latest_iata ASC
+  LIMIT 8
+)
 SELECT
-  COALESCE(MAX(po.id), 0)::bigint,
-  COUNT(DISTINCT po.packet_hash)::bigint,
-  COUNT(*)::bigint,
-  COUNT(DISTINCT po.observer_id)::bigint
-FROM packet_observations po
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))`, since, until, iataFilter).Scan(
+  summary.latest_observation_id,
+  summary.packet_count,
+  summary.observation_count,
+  summary.active_observers,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'payloadType', payload_type,
+      'count', observation_count
+    ) ORDER BY observation_count DESC, payload_type ASC)
+    FROM payload_mix
+  ), '[]'::jsonb),
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'routeType', route_type,
+      'count', observation_count
+    ) ORDER BY observation_count DESC, route_type ASC)
+    FROM route_mix
+  ), '[]'::jsonb),
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'iata', iata,
+      'count', observation_count
+    ) ORDER BY observation_count DESC, iata ASC)
+    FROM iata_mix
+  ), '[]'::jsonb),
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'observerId', observer_id,
+      'displayName', display_name,
+      'observerType', observer_type,
+      'iata', latest_iata,
+      'observationCount', observation_count
+    ) ORDER BY observation_count DESC, latest_iata ASC)
+    FROM observer_mix
+  ), '[]'::jsonb)
+FROM summary`, since, until, iataFilter).Scan(
 		&summary.LatestObservationID,
 		&summary.PacketCount,
 		&summary.ObservationCount,
 		&summary.ActiveObservers,
+		&payloadMixJSON,
+		&routeMixJSON,
+		&topIATAsJSON,
+		&topObserversJSON,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	payloadRows, err := s.pool.Query(ctx, `
-SELECT p.payload_type, COUNT(*)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY p.payload_type
-ORDER BY COUNT(*) DESC, p.payload_type ASC
-LIMIT 8`, since, until, iataFilter)
-	if err != nil {
+	if err := json.Unmarshal(payloadMixJSON, &summary.PayloadMix); err != nil {
 		return nil, err
 	}
-	for payloadRows.Next() {
-		var item api.PayloadBreakdownItem
-		if err := payloadRows.Scan(&item.PayloadType, &item.Count); err != nil {
-			payloadRows.Close()
-			return nil, err
-		}
-		item.PayloadTypeName = api.PayloadTypeName(item.PayloadType)
-		summary.PayloadMix = append(summary.PayloadMix, item)
+	for i := range summary.PayloadMix {
+		summary.PayloadMix[i].PayloadTypeName = api.PayloadTypeName(summary.PayloadMix[i].PayloadType)
 	}
-	payloadRows.Close()
-	if err := payloadRows.Err(); err != nil {
+	if err := json.Unmarshal(routeMixJSON, &summary.RouteMix); err != nil {
 		return nil, err
 	}
-
-	routeRows, err := s.pool.Query(ctx, `
-SELECT p.route_type, COUNT(*)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY p.route_type
-ORDER BY COUNT(*) DESC, p.route_type ASC`, since, until, iataFilter)
-	if err != nil {
+	for i := range summary.RouteMix {
+		summary.RouteMix[i].RouteTypeName = api.RouteTypeName(summary.RouteMix[i].RouteType)
+	}
+	if err := json.Unmarshal(topIATAsJSON, &summary.TopIATAs); err != nil {
 		return nil, err
 	}
-	for routeRows.Next() {
-		var item api.LiveRouteMixItem
-		if err := routeRows.Scan(&item.RouteType, &item.Count); err != nil {
-			routeRows.Close()
-			return nil, err
-		}
-		item.RouteTypeName = api.RouteTypeName(item.RouteType)
-		summary.RouteMix = append(summary.RouteMix, item)
-	}
-	routeRows.Close()
-	if err := routeRows.Err(); err != nil {
-		return nil, err
-	}
-
-	iataRows, err := s.pool.Query(ctx, `
-SELECT po.iata, COUNT(*)::bigint
-FROM packet_observations po
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY po.iata
-ORDER BY COUNT(*) DESC, po.iata ASC
-LIMIT 8`, since, until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	for iataRows.Next() {
-		var item api.LiveIATACount
-		if err := iataRows.Scan(&item.IATA, &item.Count); err != nil {
-			iataRows.Close()
-			return nil, err
-		}
-		summary.TopIATAs = append(summary.TopIATAs, item)
-	}
-	iataRows.Close()
-	if err := iataRows.Err(); err != nil {
-		return nil, err
-	}
-
-	observerRows, err := s.pool.Query(ctx, `
-SELECT
-  po.observer_id,
-  o.display_name,
-  o.observer_type,
-  (array_agg(po.iata ORDER BY po.id DESC))[1] AS latest_iata,
-  COUNT(*)::bigint
-FROM packet_observations po
-LEFT JOIN observers o ON o.id = po.observer_id
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY po.observer_id, o.display_name, o.observer_type
-ORDER BY COUNT(*) DESC, latest_iata ASC
-LIMIT 8`, since, until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	for observerRows.Next() {
-		var item api.TopObserver
-		if err := observerRows.Scan(&item.ObserverID, &item.DisplayName, &item.ObserverType, &item.IATA, &item.ObservationCount); err != nil {
-			observerRows.Close()
-			return nil, err
-		}
-		summary.TopObservers = append(summary.TopObservers, item)
-	}
-	observerRows.Close()
-	if err := observerRows.Err(); err != nil {
+	if err := json.Unmarshal(topObserversJSON, &summary.TopObservers); err != nil {
 		return nil, err
 	}
 

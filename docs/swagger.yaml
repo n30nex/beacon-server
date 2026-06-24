@@ -574,6 +574,113 @@ definitions:
       until:
         type: integer
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphEdge:
+    properties:
+      firstSeen:
+        type: integer
+      fromNodeId:
+        type: string
+      iatas:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      lastSeen:
+        type: integer
+      observationCount:
+        type: integer
+      routeCount:
+        type: integer
+      routeIds:
+        items:
+          type: integer
+        type: array
+      toNodeId:
+        type: string
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphLimits:
+    properties:
+      edgeLimit:
+        type: integer
+      nodeLimit:
+        type: integer
+      routeLimit:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphNode:
+    properties:
+      firstSeen:
+        type: integer
+      iatas:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      isObserver:
+        type: boolean
+      lastSeen:
+        type: integer
+      lat:
+        type: number
+      lng:
+        type: number
+      name:
+        type: string
+      nodeType:
+        type: integer
+      nodeTypeName:
+        type: string
+      observationCount:
+        type: integer
+      publicKey:
+        type: string
+      routeCount:
+        type: integer
+      routeIds:
+        items:
+          type: integer
+        type: array
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphSnapshot:
+    properties:
+      edges:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphEdge'
+        type: array
+      limits:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphLimits'
+      nodes:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphNode'
+        type: array
+      serverTime:
+        type: integer
+      stats:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphStats'
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphStats:
+    properties:
+      activeIatas:
+        type: integer
+      edgeCount:
+        type: integer
+      mappedRouteCount:
+        type: integer
+      nodeCount:
+        type: integer
+      observationCount:
+        type: integer
+      sourceRouteCount:
+        type: integer
+      truncatedEdges:
+        type: boolean
+      truncatedNodes:
+        type: boolean
+      truncatedRoutes:
+        type: boolean
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.Node:
     properties:
       defaultScope:
@@ -844,9 +951,15 @@ definitions:
         type: string
       observationCount:
         type: integer
+      queryCount:
+        type: integer
       reachableNodes:
         type: integer
       routeCount:
+        type: integer
+      routeLimit:
+        type: integer
+      sourceRouteCount:
         type: integer
       topIatas:
         items:
@@ -856,6 +969,8 @@ definitions:
         items:
           $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NodeReachNode'
         type: array
+      truncated:
+        type: boolean
       verifiedEdges:
         type: integer
     type: object
@@ -922,6 +1037,14 @@ definitions:
         items:
           $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.RouteNeighborhoodNode'
         type: array
+      queryCount:
+        type: integer
+      routeLimit:
+        type: integer
+      sourceRouteCount:
+        type: integer
+      truncated:
+        type: boolean
     type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.NodeSignalBucket:
     properties:
@@ -1572,11 +1695,17 @@ definitions:
     properties:
       id:
         type: string
+      isObserver:
+        type: boolean
       latitude:
         type: number
       longitude:
         type: number
       name:
+        type: string
+      nodeType:
+        type: integer
+      nodeTypeName:
         type: string
       publicKey:
         description: hex-encoded prefix used for resolution
@@ -2039,6 +2168,29 @@ definitions:
         type: integer
       totalObservers:
         type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.StatsHome:
+    properties:
+      live:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveSummary'
+      overview:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsOverview'
+      serverTime:
+        type: integer
+      topIatas:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveIATACount'
+        type: array
+      topNodes:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopNode'
+        type: array
+      topObservers:
+        items:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopObserver'
+        type: array
+      window:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsWindow'
     type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.StatsObserverCompare:
     properties:
@@ -2749,6 +2901,54 @@ definitions:
         description: TRACE or PING
         type: string
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot:
+    properties:
+      failures:
+        type: integer
+      lastDurationMs:
+        type: integer
+      lastError:
+        type: string
+      lastFinishedAt:
+        type: integer
+      lastStartedAt:
+        type: integer
+      lastStatus:
+        type: string
+      runs:
+        type: integer
+      successes:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot:
+    properties:
+      errors:
+        additionalProperties:
+          format: int64
+          type: integer
+        type: object
+      hits:
+        type: integer
+      invalidations:
+        type: integer
+      misses:
+        type: integer
+      ttlSeconds:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_ratelimit.Snapshot:
+    properties:
+      activeBuckets:
+        type: integer
+      allowed:
+        type: integer
+      burst:
+        type: integer
+      rejected:
+        type: integer
+      requestsPerMinute:
+        type: integer
+    type: object
   internal_api_handlers.APIError:
     properties:
       code:
@@ -2783,16 +2983,28 @@ definitions:
     type: object
   internal_api_handlers.HealthResponse:
     properties:
+      backgroundTasks:
+        additionalProperties:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot'
+        type: object
       brokers:
         items:
           $ref: '#/definitions/internal_api_handlers.HealthBroker'
         type: array
+      cacheMetrics:
+        additionalProperties:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot'
+        type: object
       dependencies:
         additionalProperties:
           $ref: '#/definitions/internal_api_handlers.HealthDependency'
         type: object
       mode:
         type: string
+      rateLimits:
+        additionalProperties:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_ratelimit.Snapshot'
+        type: object
       ready:
         type: boolean
       serverTime:
@@ -3324,6 +3536,43 @@ paths:
       summary: Backfill messages after a given message ID
       tags:
       - Messages
+  /netgraph:
+    get:
+      parameters:
+      - description: Comma-separated IATA codes
+        in: query
+        name: iatas
+        type: string
+      - description: Filter by region slug, expands to member IATAs
+        in: query
+        name: region
+        type: string
+      - description: Filter by region ID, expands to member IATAs
+        in: query
+        name: regionId
+        type: integer
+      - description: Known routes to scan, clamped to 1-2500
+        in: query
+        name: routeLimit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphSnapshot'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+      summary: 3D netgraph topology snapshot
+      tags:
+      - Netgraph
   /nodes:
     get:
       parameters:
@@ -3597,6 +3846,10 @@ paths:
         in: query
         name: maxHops
         type: integer
+      - description: Known routes per node/IATA expansion, capped at 600
+        in: query
+        name: routeLimit
+        type: integer
       produces:
       - application/json
       responses:
@@ -3642,6 +3895,10 @@ paths:
       - description: Maximum graph hops, capped at 5
         in: query
         name: maxHops
+        type: integer
+      - description: Known routes per node/IATA expansion, capped at 600
+        in: query
+        name: routeLimit
         type: integer
       produces:
       - application/json
@@ -4520,6 +4777,51 @@ paths:
           schema:
             $ref: '#/definitions/internal_api_handlers.APIError'
       summary: Lookup packets matching a path-hash prefix
+      tags:
+      - Stats
+  /stats/home:
+    get:
+      parameters:
+      - description: Comma-separated IATA codes
+        in: query
+        name: iatas
+        type: string
+      - description: Filter by region ID, expands to member IATAs
+        in: query
+        name: regionId
+        type: integer
+      - description: Filter by region slug, expands to member IATAs
+        in: query
+        name: region
+        type: string
+      - description: 'Window preset: 24h, 7d, or 30d'
+        in: query
+        name: range
+        type: string
+      - description: Window start as epoch milliseconds
+        in: query
+        name: since
+        type: integer
+      - description: Window end as epoch milliseconds
+        in: query
+        name: until
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsHome'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+      summary: Fast Home command center summary
       tags:
       - Stats
   /stats/node-types:

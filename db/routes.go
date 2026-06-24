@@ -127,14 +127,15 @@ func (s *Store) SearchKnownRoutes(ctx context.Context, iata, fromHash, toHash st
 	return items, nil
 }
 
-func (s *Store) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]api.KnownRoute, error) {
+func (s *Store) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID, limit int32) ([]api.KnownRoute, error) {
 	rows, err := s.queryKnownRoutes(ctx, `
 		SELECT id, node_ids, hash_prefix, iata, hop_count, first_seen, last_seen, observation_count
 		FROM known_routes
 		WHERE ($1 = '' OR iata = $1)
-		  AND $2::uuid = ANY(node_ids)
-		ORDER BY hop_count ASC, last_seen DESC
-	`, iata, nodeID)
+		  AND node_ids @> ARRAY[$2::uuid]
+		ORDER BY hop_count ASC, last_seen DESC, observation_count DESC, id ASC
+		LIMIT NULLIF($3::int, 0)
+	`, iata, nodeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -233,13 +234,13 @@ func (s *Store) SearchCrossIATARoutes(ctx context.Context, fromHash, fromIATA, t
 	toNodeID := toEntries[0].NodeID
 
 	// 3. find routes in source IATA containing fromNode
-	sourceRoutes, err := s.GetKnownRoutesByNode(ctx, fromIATA, fromNodeID)
+	sourceRoutes, err := s.GetKnownRoutesByNode(ctx, fromIATA, fromNodeID, 0)
 	if err != nil {
 		return nil, err
 	}
 
 	// 4. find routes in target IATA containing toNode
-	targetRoutes, err := s.GetKnownRoutesByNode(ctx, toIATA, toNodeID)
+	targetRoutes, err := s.GetKnownRoutesByNode(ctx, toIATA, toNodeID, 0)
 	if err != nil {
 		return nil, err
 	}

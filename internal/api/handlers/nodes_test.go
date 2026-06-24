@@ -35,12 +35,39 @@ func (r *nodeAnalyticsReader) GetNodeAnalytics(ctx context.Context, nodeID uuid.
 		Since:  filter.Since.UnixMilli(),
 		Until:  filter.Until.UnixMilli(),
 		KPIs:   api.NodeAnalyticsKPI{PacketCount: 2, ObservationCount: 5, ActiveObservers: 3, ActiveIATAs: 2},
+		PayloadMix: []api.NodeAnalyticsCount{{
+			Key:   "4",
+			Label: "advert",
+			Count: 3,
+		}},
+		RouteMix: []api.NodeAnalyticsCount{{
+			Key:   "1",
+			Label: "FLOOD",
+			Count: 5,
+		}},
+		IATAMix: []api.NodeAnalyticsCount{{
+			Key:   "YVR",
+			Label: "YVR",
+			Count: 5,
+		}},
+		Hourly: []api.NodeActivityPoint{{
+			Timestamp:    filter.Since.UnixMilli(),
+			Packets:      2,
+			Observations: 5,
+		}},
+		SNRBuckets: []api.NodeSignalBucket{{Bucket: "5..10", Count: 4}},
+		TopObservers: []api.NodeAnalyticsCount{{
+			Key:   "00000000-0000-0000-0000-000000000201",
+			Label: "West Roof",
+			Count: 5,
+		}},
 	}, nil
 }
 
 type nodeReachReader struct {
 	stubReader
 	calls  []string
+	limit  int32
 	routes []api.KnownRoute
 }
 
@@ -109,8 +136,9 @@ func testRoute(id int64, iata string, observations int64, nodes ...*api.Resolved
 	}
 }
 
-func (r *nodeReachReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID) ([]api.KnownRoute, error) {
+func (r *nodeReachReader) GetKnownRoutesByNode(ctx context.Context, iata string, nodeID uuid.UUID, limit int32) ([]api.KnownRoute, error) {
 	r.calls = append(r.calls, iata)
+	r.limit = limit
 	out := make([]api.KnownRoute, 0, len(r.routes))
 	for _, route := range r.routes {
 		if iata != "" && route.IATA != iata {
@@ -122,6 +150,9 @@ func (r *nodeReachReader) GetKnownRoutesByNode(ctx context.Context, iata string,
 				break
 			}
 		}
+	}
+	if limit > 0 && len(out) > int(limit) {
+		return out[:int(limit)], nil
 	}
 	return out, nil
 }
@@ -247,6 +278,17 @@ func TestGetNodeReach_InvalidMaxHops(t *testing.T) {
 	}
 }
 
+func TestGetNodeReach_InvalidRouteLimit(t *testing.T) {
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/reach", getNodeReach(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/00000000-0000-0000-0000-000000000001/reach?routeLimit=0", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestGetNodeReach_FilterAndCap(t *testing.T) {
 	nodeA := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	nodeB := uuid.MustParse("00000000-0000-0000-0000-000000000002")
@@ -280,6 +322,9 @@ func TestGetNodeReach_FilterAndCap(t *testing.T) {
 	if body.MaxHops != 5 {
 		t.Fatalf("expected maxHops cap 5, got %d", body.MaxHops)
 	}
+	if body.RouteLimit != 300 || reader.limit != 300 {
+		t.Fatalf("expected default routeLimit 300, got body=%d reader=%d", body.RouteLimit, reader.limit)
+	}
 	if body.ReachableNodes != 3 || body.VerifiedEdges != 3 || body.RouteCount != 2 {
 		t.Fatalf("unexpected reach summary: %#v", body)
 	}
@@ -289,6 +334,42 @@ func TestGetNodeReach_FilterAndCap(t *testing.T) {
 	gotCalls := strings.Join(reader.calls[:2], ",")
 	if gotCalls != "YOW,YVR" {
 		t.Fatalf("expected sorted unique initial IATA calls YOW,YVR, got %q", gotCalls)
+	}
+}
+
+func TestGetNodeRouteNeighborhood_RouteLimitTruncatesExpansion(t *testing.T) {
+	nodeA := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	nodeB := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	nodeC := uuid.MustParse("00000000-0000-0000-0000-000000000003")
+	reader := &nodeReachReader{
+		routes: []api.KnownRoute{
+			testRoute(101, "YVR", 10,
+				testResolvedNode(nodeA, "Alpha", 49, -123),
+				testResolvedNode(nodeB, "Bravo", 50, -124),
+			),
+			testRoute(202, "YVR", 7,
+				testResolvedNode(nodeA, "Alpha", 49, -123),
+				testResolvedNode(nodeC, "Charlie", 51, -125),
+			),
+		},
+	}
+	r := chi.NewRouter()
+	r.Get("/nodes/{nodeId}/route-neighborhood", getNodeRouteNeighborhood(reader))
+	req := httptest.NewRequest(http.MethodGet, "/nodes/00000000-0000-0000-0000-000000000001/route-neighborhood?iatas=YVR&maxHops=1&routeLimit=1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body api.NodeRouteNeighborhood
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.RouteLimit != 1 || body.QueryCount != 1 || body.SourceRouteCount != 1 || !body.Truncated {
+		t.Fatalf("unexpected neighborhood limits: %#v", body)
+	}
+	if len(body.Edges) != 1 {
+		t.Fatalf("expected one shaped edge, got %#v", body.Edges)
 	}
 }
 
@@ -339,6 +420,9 @@ func TestGetNodeAnalytics_FilterContract(t *testing.T) {
 	}
 	if body.KPIs.ObservationCount != 5 {
 		t.Fatalf("expected observation count 5, got %d", body.KPIs.ObservationCount)
+	}
+	if len(body.PayloadMix) != 1 || body.PayloadMix[0].Label != "advert" || len(body.Hourly) != 1 || len(body.TopObservers) != 1 {
+		t.Fatalf("unexpected node analytics response shape: %#v", body)
 	}
 }
 

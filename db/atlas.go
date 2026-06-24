@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
@@ -124,28 +125,87 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 		return nil, err
 	}
 	iataFilter := strings.Join(iatas, ",")
-	allIATARows, err := s.getAtlasIATAs(ctx, since, until, "")
-	if err != nil {
+	var (
+		allIATARows      []api.AtlasIATA
+		previousIATARows []api.AtlasIATA
+		payload          []api.PayloadBreakdownItem
+		routeMix         []api.LiveRouteMixItem
+		topNodes         []api.TopNode
+		topObservers     []api.TopObserver
+		scopes           []api.ScopeSummary
+		health           *api.StatsObserverHealthResponse
+		notableRoutes    []api.AtlasNotableRoute
+	)
+	if err := runStoreParallelTasks(ctx,
+		storeParallelTask{
+			name: "atlas current/previous iata rollups",
+			run: func(ctx context.Context) error {
+				var err error
+				allIATARows, previousIATARows, err = s.getAtlasCurrentAndPreviousIATAs(ctx, since, until, "")
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas payload and route mix",
+			run: func(ctx context.Context) error {
+				var err error
+				payload, routeMix, err = s.getAtlasPayloadAndRouteMix(ctx, since, until, iataFilter)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas top nodes",
+			run: func(ctx context.Context) error {
+				var err error
+				topNodes, err = s.getAtlasTopNodes(ctx, since, until, iataFilter, 8)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas top observers",
+			run: func(ctx context.Context) error {
+				var err error
+				topObservers, err = s.getAtlasTopObservers(ctx, since, until, iataFilter, 8)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas scope summaries",
+			run: func(ctx context.Context) error {
+				var err error
+				scopes, err = s.getAtlasScopeSummaries(ctx, len(iatas))
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas observer health",
+			run: func(ctx context.Context) error {
+				var err error
+				health, err = s.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
+					StatsFilter: api.StatsFilter{
+						IATAs: iatas,
+						Since: since,
+						Until: until,
+						Limit: 500,
+					},
+					StaleAfter: statsDefaultStaleAfter,
+				})
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "atlas notable routes",
+			run: func(ctx context.Context) error {
+				var err error
+				notableRoutes, err = s.getAtlasNotableRoutes(ctx, iatas)
+				return err
+			},
+		},
+	); err != nil {
 		return nil, err
 	}
 	iataRows := atlasFilterIATAs(allIATARows, iatas)
 	kpis := atlasKPIsFromIATAs(iataRows, since, until)
-	payload, err := s.getAtlasPayloadMix(ctx, since, until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	topNodes, err := s.getAtlasTopNodes(ctx, since, until, iataFilter, 8)
-	if err != nil {
-		return nil, err
-	}
-	topObservers, err := s.getAtlasTopObservers(ctx, since, until, iataFilter, 8)
-	if err != nil {
-		return nil, err
-	}
-	scopes, err := s.getAtlasScopeSummaries(ctx, len(iatas))
-	if err != nil {
-		return nil, err
-	}
 	summary := &api.RegionAtlasSummary{
 		Region:       *region,
 		Window:       api.AtlasWindow{Since: since.UnixMilli(), Until: until.UnixMilli()},
@@ -155,31 +215,6 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 		TopNodes:     topNodes,
 		TopObservers: topObservers,
 		Scopes:       scopes,
-	}
-
-	health, err := s.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
-		StatsFilter: api.StatsFilter{
-			IATAs: iatas,
-			Since: since,
-			Until: until,
-			Limit: 500,
-		},
-		StaleAfter: statsDefaultStaleAfter,
-	})
-	if err != nil {
-		return nil, err
-	}
-	routeMix, err := s.getAtlasRouteMix(ctx, since, until, iataFilter)
-	if err != nil {
-		return nil, err
-	}
-	notableRoutes, err := s.getAtlasNotableRoutes(ctx, iatas)
-	if err != nil {
-		return nil, err
-	}
-	previousIATARows, err := s.getAtlasIATAs(ctx, since.Add(-until.Sub(since)), since, "")
-	if err != nil {
-		return nil, err
 	}
 	regions, err := s.getAtlasBriefingRegions(ctx, since, until, allIATARows, previousIATARows)
 	if err != nil {
@@ -207,6 +242,37 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 		RouteMix:          routeMix,
 		Scopes:            summary.Scopes,
 	}, nil
+}
+
+type storeParallelTask struct {
+	name string
+	run  func(context.Context) error
+}
+
+func runStoreParallelTasks(ctx context.Context, tasks ...storeParallelTask) error {
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	for _, task := range tasks {
+		task := task
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := task.run(taskCtx); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("%s: %w", task.name, err)
+					cancel()
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
 }
 
 func (s *Store) getAtlasBriefingRegions(ctx context.Context, since, until time.Time, currentRows, previousRows []api.AtlasIATA) ([]api.AtlasBriefingRegion, error) {
@@ -347,21 +413,29 @@ WHERE po.heard_at >= $1
 
 func (s *Store) getAtlasIATAs(ctx context.Context, since, until time.Time, iatas string) ([]api.AtlasIATA, error) {
 	const q = `
+WITH counts AS MATERIALIZED (
+  SELECT
+    po.iata,
+    COUNT(*)::bigint AS observation_count,
+    COUNT(DISTINCT po.packet_hash)::bigint AS unique_packets,
+    COUNT(DISTINCT po.observer_id)::bigint AS active_observers
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.iata
+)
 SELECT
   i.iata,
   i.display_name,
   i.approx_lat,
   i.approx_lng,
-  COUNT(po.id)::bigint AS observation_count,
-  COUNT(DISTINCT po.packet_hash)::bigint AS unique_packets,
-  COUNT(DISTINCT po.observer_id)::bigint AS active_observers
+  COALESCE(c.observation_count, 0)::bigint AS observation_count,
+  COALESCE(c.unique_packets, 0)::bigint AS unique_packets,
+  COALESCE(c.active_observers, 0)::bigint AS active_observers
 FROM iata_codes i
-LEFT JOIN packet_observations po
-  ON po.iata = i.iata
- AND po.heard_at >= $1
- AND po.heard_at <= $2
+LEFT JOIN counts c ON c.iata = i.iata
 WHERE ($3::text = '' OR i.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY i.iata, i.display_name, i.approx_lat, i.approx_lng
 ORDER BY observation_count DESC, i.iata`
 	rows, err := s.pool.Query(ctx, q, since, until, iatas)
 	if err != nil {
@@ -377,6 +451,33 @@ ORDER BY observation_count DESC, i.iata`
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func (s *Store) getAtlasCurrentAndPreviousIATAs(ctx context.Context, since, until time.Time, iatas string) ([]api.AtlasIATA, []api.AtlasIATA, error) {
+	var current []api.AtlasIATA
+	var previous []api.AtlasIATA
+	window := until.Sub(since)
+	if err := runStoreParallelTasks(ctx,
+		storeParallelTask{
+			name: "current atlas iata rollup",
+			run: func(ctx context.Context) error {
+				var err error
+				current, err = s.getAtlasIATAs(ctx, since, until, iatas)
+				return err
+			},
+		},
+		storeParallelTask{
+			name: "previous atlas iata rollup",
+			run: func(ctx context.Context) error {
+				var err error
+				previous, err = s.getAtlasIATAs(ctx, since.Add(-window), since, iatas)
+				return err
+			},
+		},
+	); err != nil {
+		return nil, nil, err
+	}
+	return current, previous, nil
 }
 
 func (s *Store) getAtlasHourly(ctx context.Context, since, until time.Time, iatas string) ([]api.ObservationPoint, error) {
@@ -466,15 +567,81 @@ LIMIT 8`
 	return result, rows.Err()
 }
 
+func (s *Store) getAtlasPayloadAndRouteMix(ctx context.Context, since, until time.Time, iatas string) ([]api.PayloadBreakdownItem, []api.LiveRouteMixItem, error) {
+	const q = `
+WITH base AS MATERIALIZED (
+  SELECT p.payload_type, p.route_type
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+),
+payload_mix AS (
+  SELECT payload_type AS code, COUNT(*)::bigint AS count
+  FROM base
+  GROUP BY payload_type
+),
+route_mix AS (
+  SELECT route_type AS code, COUNT(*)::bigint AS count
+  FROM base
+  GROUP BY route_type
+  ORDER BY count DESC, route_type ASC
+  LIMIT 8
+)
+SELECT 'payload' AS kind, code, count
+FROM payload_mix
+UNION ALL
+SELECT 'route' AS kind, code, count
+FROM route_mix
+ORDER BY kind, count DESC, code ASC`
+	rows, err := s.pool.Query(ctx, q, since, until, iatas)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	payload := []api.PayloadBreakdownItem{}
+	routes := []api.LiveRouteMixItem{}
+	for rows.Next() {
+		var kind string
+		var code int16
+		var count int64
+		if err := rows.Scan(&kind, &code, &count); err != nil {
+			return nil, nil, err
+		}
+		switch kind {
+		case "payload":
+			payload = append(payload, api.PayloadBreakdownItem{
+				PayloadType:     code,
+				PayloadTypeName: api.PayloadTypeName(code),
+				Count:           count,
+			})
+		case "route":
+			routes = append(routes, api.LiveRouteMixItem{
+				RouteType:     code,
+				RouteTypeName: api.RouteTypeName(code),
+				Count:         count,
+			})
+		}
+	}
+	return payload, routes, rows.Err()
+}
+
 func (s *Store) getAtlasActiveNodes(ctx context.Context, since, until time.Time, iatas string) (int64, error) {
 	const q = `
-SELECT COUNT(DISTINCT n.id)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-JOIN nodes n ON n.public_key = p.origin_pubkey
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))`
+WITH active_origins AS (
+  SELECT p.origin_pubkey
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND p.origin_pubkey IS NOT NULL
+  GROUP BY p.origin_pubkey
+)
+SELECT COUNT(*)::bigint
+FROM active_origins ao
+JOIN nodes n ON n.public_key = ao.origin_pubkey`
 	var count int64
 	if err := s.pool.QueryRow(ctx, q, since, until, iatas).Scan(&count); err != nil {
 		return 0, err
@@ -498,13 +665,19 @@ WHERE kr.last_seen >= $1
 
 func (s *Store) getAtlasActiveNodesByIATA(ctx context.Context, since, until time.Time) (map[string]int64, error) {
 	const q = `
-SELECT po.iata, COUNT(DISTINCT n.id)::bigint
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-JOIN nodes n ON n.public_key = p.origin_pubkey
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-GROUP BY po.iata`
+WITH active_origins AS (
+  SELECT po.iata, p.origin_pubkey
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND p.origin_pubkey IS NOT NULL
+  GROUP BY po.iata, p.origin_pubkey
+)
+SELECT ao.iata, COUNT(*)::bigint
+FROM active_origins ao
+JOIN nodes n ON n.public_key = ao.origin_pubkey
+GROUP BY ao.iata`
 	rows, err := s.pool.Query(ctx, q, since, until)
 	if err != nil {
 		return nil, err
@@ -548,21 +721,30 @@ GROUP BY kr.iata`
 
 func (s *Store) getAtlasTopNodes(ctx context.Context, since, until time.Time, iatas string, limit int32) ([]api.TopNode, error) {
 	const q = `
+WITH node_counts AS (
+  SELECT
+    p.origin_pubkey,
+    COALESCE((array_agg(DISTINCT po.iata ORDER BY po.iata))[1], '')::text AS iata,
+    COUNT(*)::bigint AS observation_count,
+    MAX(po.heard_at)::timestamptz AS last_heard
+  FROM packet_observations po
+  JOIN packets p ON p.packet_hash = po.packet_hash
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+    AND p.origin_pubkey IS NOT NULL
+  GROUP BY p.origin_pubkey
+)
 SELECT
   n.id,
   n.name,
   n.node_type,
-  COALESCE((array_agg(DISTINCT po.iata ORDER BY po.iata))[1], '')::text AS iata,
-  COUNT(*)::bigint AS observation_count,
-  MAX(po.heard_at)::timestamptz AS last_heard
-FROM packet_observations po
-JOIN packets p ON p.packet_hash = po.packet_hash
-JOIN nodes n ON n.public_key = p.origin_pubkey
-WHERE po.heard_at >= $1
-  AND po.heard_at <= $2
-  AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-GROUP BY n.id
-ORDER BY observation_count DESC
+  nc.iata,
+  nc.observation_count,
+  nc.last_heard
+FROM node_counts nc
+JOIN nodes n ON n.public_key = nc.origin_pubkey
+ORDER BY nc.observation_count DESC, nc.last_heard DESC
 LIMIT $4`
 	rows, err := s.pool.Query(ctx, q, since, until, iatas, limit)
 	if err != nil {

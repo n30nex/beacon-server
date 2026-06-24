@@ -173,7 +173,7 @@ const getKnownRoutesByNode = `-- name: GetKnownRoutesByNode :many
 SELECT id, node_ids, hash_prefix, iata, hop_count, first_seen, last_seen, observation_count
 FROM known_routes
 WHERE iata = $1
-  AND $2::uuid = ANY(node_ids)
+  AND node_ids @> ARRAY[$2::uuid]
 ORDER BY hop_count ASC, last_seen DESC
 `
 
@@ -336,17 +336,26 @@ func (q *Queries) GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]Get
 }
 
 const getNodesByIDs = `-- name: GetNodesByIDs :many
-SELECT id, public_key, name, latitude, longitude
-FROM nodes
-WHERE id = ANY($1::uuid[])
+SELECT
+  n.id,
+  n.public_key,
+  n.name,
+  n.node_type,
+  n.latitude,
+  n.longitude,
+  EXISTS (SELECT 1 FROM observers o WHERE o.public_key = n.public_key) AS is_observer
+FROM nodes n
+WHERE n.id = ANY($1::uuid[])
 `
 
 type GetNodesByIDsRow struct {
-	ID        uuid.UUID `json:"id"`
-	PublicKey []byte    `json:"public_key"`
-	Name      *string   `json:"name"`
-	Latitude  *float64  `json:"latitude"`
-	Longitude *float64  `json:"longitude"`
+	ID         uuid.UUID `json:"id"`
+	PublicKey  []byte    `json:"public_key"`
+	Name       *string   `json:"name"`
+	NodeType   int16     `json:"node_type"`
+	Latitude   *float64  `json:"latitude"`
+	Longitude  *float64  `json:"longitude"`
+	IsObserver bool      `json:"is_observer"`
 }
 
 func (q *Queries) GetNodesByIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]GetNodesByIDsRow, error) {
@@ -362,8 +371,10 @@ func (q *Queries) GetNodesByIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]Ge
 			&i.ID,
 			&i.PublicKey,
 			&i.Name,
+			&i.NodeType,
 			&i.Latitude,
 			&i.Longitude,
+			&i.IsObserver,
 		); err != nil {
 			return nil, err
 		}
@@ -998,14 +1009,27 @@ func (q *Queries) GetScopeNames(ctx context.Context) ([]string, error) {
 const getScopeStats = `-- name: GetScopeStats :many
 SELECT
     ts.name,
-    COUNT(DISTINCT p.packet_hash) AS packet_count,
-    COUNT(DISTINCT os.observer_id) AS observer_count,
-    COUNT(DISTINCT n.id) AS node_count
+    COALESCE(packet_counts.packet_count, 0)::bigint AS packet_count,
+    COALESCE(observer_counts.observer_count, 0)::bigint AS observer_count,
+    COALESCE(node_counts.node_count, 0)::bigint AS node_count
 FROM transport_scopes ts
-LEFT JOIN packets p ON p.scope_id = ts.id
-LEFT JOIN observer_scopes os ON os.scope_id = ts.id
-LEFT JOIN nodes n ON n.default_scope_id = ts.id
-GROUP BY ts.name
+LEFT JOIN (
+  SELECT scope_id, COUNT(*)::bigint AS packet_count
+  FROM packets
+  WHERE scope_id IS NOT NULL
+  GROUP BY scope_id
+) packet_counts ON packet_counts.scope_id = ts.id
+LEFT JOIN (
+  SELECT scope_id, COUNT(*)::bigint AS observer_count
+  FROM observer_scopes
+  GROUP BY scope_id
+) observer_counts ON observer_counts.scope_id = ts.id
+LEFT JOIN (
+  SELECT default_scope_id AS scope_id, COUNT(*)::bigint AS node_count
+  FROM nodes
+  WHERE default_scope_id IS NOT NULL
+  GROUP BY default_scope_id
+) node_counts ON node_counts.scope_id = ts.id
 ORDER BY ts.name
 `
 

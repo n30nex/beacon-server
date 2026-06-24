@@ -37,6 +37,63 @@ type statsTopologyReader struct {
 	filter api.StatsFilter
 }
 
+type statsHomeReader struct {
+	stubReader
+	summaryCalled bool
+}
+
+type statsObserverHealthReader struct {
+	stubReader
+	filter api.StatsObserverHealthFilter
+}
+
+func (r *statsHomeReader) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*api.StatsSummary, error) {
+	r.summaryCalled = true
+	return nil, nil
+}
+
+func (r *statsHomeReader) GetStatsOverview(ctx context.Context, iatas []string) (*api.StatsOverview, error) {
+	return &api.StatsOverview{TotalPackets: 100, TotalObservations: 250, ActiveObservers: 7, ActiveIATAs: 3, WindowHours: 24}, nil
+}
+
+func (r *statsHomeReader) GetLiveSummary(ctx context.Context, filter api.LiveSummaryFilter) (*api.LiveSummary, error) {
+	return &api.LiveSummary{
+		ServerTime:          123,
+		Since:               filter.Since.UnixMilli(),
+		Until:               filter.Until.UnixMilli(),
+		LatestObservationID: 42,
+		PacketCount:         10,
+		ObservationCount:    30,
+		ActiveObservers:     4,
+		TopIATAs: []api.LiveIATACount{
+			{IATA: "YVR", Count: 20},
+			{IATA: "YYJ", Count: 10},
+		},
+	}, nil
+}
+
+func (r *statsHomeReader) GetStatsTopNodes(ctx context.Context, iatas []string, limit int32) ([]api.TopNode, error) {
+	return []api.TopNode{{
+		NodeID:           uuid.MustParse("00000000-0000-0000-0000-000000000101"),
+		NodeName:         strPtr("Node One"),
+		NodeType:         1,
+		NodeTypeName:     "Repeater",
+		IATA:             "YVR",
+		ObservationCount: 12,
+		LastHeard:        456,
+	}}, nil
+}
+
+func (r *statsHomeReader) GetStatsTopObservers(ctx context.Context, iatas []string, since time.Time, limit int32) ([]api.TopObserver, error) {
+	return []api.TopObserver{{
+		ObserverID:       uuid.MustParse("00000000-0000-0000-0000-000000000201"),
+		DisplayName:      strPtr("Observer One"),
+		ObserverType:     strPtr("mqtt"),
+		IATA:             "YVR",
+		ObservationCount: 15,
+	}}, nil
+}
+
 type statsSubpathsReader struct {
 	stubReader
 	filter api.StatsFilter
@@ -130,6 +187,51 @@ func (r *statsChannelsReader) GetStatsChannels(ctx context.Context, filter api.S
 	}, nil
 }
 
+func (r *statsObserverHealthReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
+	r.filter = filter
+	telemetryAt := filter.Until.Add(-2 * time.Minute).UnixMilli()
+	battery := int32(3600)
+	noise := float32(-116.5)
+	tx := float32(12.5)
+	rx := float32(18.25)
+	queue := int32(2)
+	errors := int32(1)
+	return &api.StatsObserverHealthResponse{
+		ServerTime: 1710000005000,
+		Window: api.StatsWindow{
+			Since:  filter.Since.UnixMilli(),
+			Until:  filter.Until.UnixMilli(),
+			Bucket: filter.Bucket,
+		},
+		Summary: api.StatsHealthSummary{
+			TotalObservers: 2,
+			ReceiveErrors:  1,
+			NoTelemetry:    1,
+		},
+		Items: []api.StatsObserverHealth{{
+			ObserverID:       uuid.MustParse("00000000-0000-0000-0000-000000000301"),
+			DisplayName:      strPtr("West Roof"),
+			ObserverType:     strPtr("mqtt"),
+			IATA:             "YVR",
+			Status:           "online",
+			LastHeard:        filter.Until.Add(-time.Minute).UnixMilli(),
+			ObservationCount: 42,
+			TelemetryAt:      &telemetryAt,
+			HasTelemetry:     true,
+			BatteryMV:        &battery,
+			NoiseFloorDB:     &noise,
+			AirtimeTxPct:     &tx,
+			AirtimeRxPct:     &rx,
+			QueueLength:      &queue,
+			ReceiveErrors:    &errors,
+			HealthScore:      88,
+			Flags: api.StatsObserverHealthFlags{
+				ReceiveErrors: true,
+			},
+		}},
+	}, nil
+}
+
 func TestGetStatsObservations_InvalidSince(t *testing.T) {
 	r := chi.NewRouter()
 	r.Get("/stats/observations", getStatsObservations(stubReader{}))
@@ -193,6 +295,62 @@ func TestGetStatsSummary_InvalidSince(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetStatsHome_UsesCompactReaderCalls(t *testing.T) {
+	reader := &statsHomeReader{}
+	r := chi.NewRouter()
+	r.Get("/stats/home", getStatsHome(reader))
+	req := httptest.NewRequest(http.MethodGet, "/stats/home?range=24h&iatas=YVR,YYJ", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if reader.summaryCalled {
+		t.Fatal("home endpoint must not call the heavy stats summary")
+	}
+	var body api.StatsHome
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Overview.TotalPackets != 100 || body.Live.ObservationCount != 30 {
+		t.Fatalf("unexpected home payload: %+v", body)
+	}
+	if len(body.TopNodes) != 1 || len(body.TopObservers) != 1 || len(body.TopIATAs) != 2 {
+		t.Fatalf("expected compact rankings in response: %+v", body)
+	}
+}
+
+func TestGetStatsObserverHealth_ResponseShapeFixture(t *testing.T) {
+	reader := &statsObserverHealthReader{}
+	r := chi.NewRouter()
+	r.Get("/stats/observer-health", getStatsObserverHealth(reader))
+	req := httptest.NewRequest(http.MethodGet, "/stats/observer-health?range=24h&bucket=1h&limit=25&iatas=yvr&staleAfterMinutes=15", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if reader.filter.Limit != 25 || reader.filter.StaleAfter != 15*time.Minute {
+		t.Fatalf("unexpected observer-health filter: %#v", reader.filter)
+	}
+	if len(reader.filter.IATAs) != 1 || reader.filter.IATAs[0] != "YVR" {
+		t.Fatalf("unexpected IATA filter: %#v", reader.filter.IATAs)
+	}
+	var body api.StatsObserverHealthResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Summary.TotalObservers != 2 || body.Summary.ReceiveErrors != 1 || len(body.Items) != 1 {
+		t.Fatalf("unexpected observer-health body: %#v", body)
+	}
+	if body.Items[0].Status != "online" || !body.Items[0].HasTelemetry || !body.Items[0].Flags.ReceiveErrors {
+		t.Fatalf("unexpected observer-health item: %#v", body.Items[0])
 	}
 }
 

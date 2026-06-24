@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	"github.com/MeshCore-Beacon/beacon-server/internal/background"
+	"github.com/MeshCore-Beacon/beacon-server/internal/cache"
 	"github.com/MeshCore-Beacon/beacon-server/internal/ingest"
 )
 
@@ -102,5 +104,50 @@ func TestReadinessHandlerFailsWhenConfiguredBrokerDisconnected(t *testing.T) {
 	}
 	if body.Dependencies["ingestWorkers"].Status != "degraded" {
 		t.Fatalf("expected degraded ingest dependency, got %#v", body.Dependencies["ingestWorkers"])
+	}
+}
+
+func TestHealthHandlerReportsOperationalSnapshots(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+
+	HealthHandler(stubReader{}, nil, HealthConfig{
+		Version:      "test",
+		CacheStatus:  "ok",
+		CacheBackend: "127.0.0.1:6379",
+		CacheSnapshot: func() map[string]cache.CategorySnapshot {
+			return map[string]cache.CategorySnapshot{
+				cache.CategoryStats: {
+					Hits:          2,
+					Misses:        1,
+					Invalidations: 1,
+					TTLSeconds:    3600,
+				},
+			}
+		},
+		BackgroundSnapshot: func() map[string]background.TaskSnapshot {
+			return map[string]background.TaskSnapshot{
+				"cleanup": {
+					Runs:           1,
+					Successes:      1,
+					LastStatus:     "success",
+					LastDurationMs: 7,
+				},
+			}
+		},
+	}).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body HealthResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if body.CacheMetrics[cache.CategoryStats].Hits != 2 {
+		t.Fatalf("expected cache metrics in health response, got %#v", body.CacheMetrics)
+	}
+	if body.BackgroundTasks["cleanup"].LastStatus != "success" {
+		t.Fatalf("expected background task metrics in health response, got %#v", body.BackgroundTasks)
 	}
 }

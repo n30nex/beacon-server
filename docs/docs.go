@@ -799,6 +799,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/netgraph": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Netgraph"
+                ],
+                "summary": "3D netgraph topology snapshot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Comma-separated IATA codes",
+                        "name": "iatas",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region slug, expands to member IATAs",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by region ID, expands to member IATAs",
+                        "name": "regionId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Known routes to scan, clamped to 1-2500",
+                        "name": "routeLimit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphSnapshot"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/nodes": {
             "get": {
                 "produces": [
@@ -1219,6 +1276,12 @@ const docTemplate = `{
                         "description": "Maximum graph hops, capped at 5",
                         "name": "maxHops",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Known routes per node/IATA expansion, capped at 600",
+                        "name": "routeLimit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1288,6 +1351,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "Maximum graph hops, capped at 5",
                         "name": "maxHops",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Known routes per node/IATA expansion, capped at 600",
+                        "name": "routeLimit",
                         "in": "query"
                     }
                 ],
@@ -2605,6 +2674,75 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsHashPrefixLookup"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/stats/home": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Stats"
+                ],
+                "summary": "Fast Home command center summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Comma-separated IATA codes",
+                        "name": "iatas",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by region ID, expands to member IATAs",
+                        "name": "regionId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by region slug, expands to member IATAs",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Window preset: 24h, 7d, or 30d",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window start as epoch milliseconds",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Window end as epoch milliseconds",
+                        "name": "until",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsHome"
                         }
                     },
                     "400": {
@@ -4689,6 +4827,169 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphEdge": {
+            "type": "object",
+            "properties": {
+                "firstSeen": {
+                    "type": "integer"
+                },
+                "fromNodeId": {
+                    "type": "string"
+                },
+                "iatas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastSeen": {
+                    "type": "integer"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "routeCount": {
+                    "type": "integer"
+                },
+                "routeIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "toNodeId": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphLimits": {
+            "type": "object",
+            "properties": {
+                "edgeLimit": {
+                    "type": "integer"
+                },
+                "nodeLimit": {
+                    "type": "integer"
+                },
+                "routeLimit": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphNode": {
+            "type": "object",
+            "properties": {
+                "firstSeen": {
+                    "type": "integer"
+                },
+                "iatas": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isObserver": {
+                    "type": "boolean"
+                },
+                "lastSeen": {
+                    "type": "integer"
+                },
+                "lat": {
+                    "type": "number"
+                },
+                "lng": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "nodeType": {
+                    "type": "integer"
+                },
+                "nodeTypeName": {
+                    "type": "string"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "publicKey": {
+                    "type": "string"
+                },
+                "routeCount": {
+                    "type": "integer"
+                },
+                "routeIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphSnapshot": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphEdge"
+                    }
+                },
+                "limits": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphLimits"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphNode"
+                    }
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "stats": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphStats"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.NetgraphStats": {
+            "type": "object",
+            "properties": {
+                "activeIatas": {
+                    "type": "integer"
+                },
+                "edgeCount": {
+                    "type": "integer"
+                },
+                "mappedRouteCount": {
+                    "type": "integer"
+                },
+                "nodeCount": {
+                    "type": "integer"
+                },
+                "observationCount": {
+                    "type": "integer"
+                },
+                "sourceRouteCount": {
+                    "type": "integer"
+                },
+                "truncatedEdges": {
+                    "type": "boolean"
+                },
+                "truncatedNodes": {
+                    "type": "boolean"
+                },
+                "truncatedRoutes": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_MeshCore-Beacon_beacon-server_internal_api.Node": {
             "type": "object",
             "properties": {
@@ -5088,10 +5389,19 @@ const docTemplate = `{
                 "observationCount": {
                     "type": "integer"
                 },
+                "queryCount": {
+                    "type": "integer"
+                },
                 "reachableNodes": {
                     "type": "integer"
                 },
                 "routeCount": {
+                    "type": "integer"
+                },
+                "routeLimit": {
+                    "type": "integer"
+                },
+                "sourceRouteCount": {
                     "type": "integer"
                 },
                 "topIatas": {
@@ -5105,6 +5415,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.NodeReachNode"
                     }
+                },
+                "truncated": {
+                    "type": "boolean"
                 },
                 "verifiedEdges": {
                     "type": "integer"
@@ -5206,6 +5519,18 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.RouteNeighborhoodNode"
                     }
+                },
+                "queryCount": {
+                    "type": "integer"
+                },
+                "routeLimit": {
+                    "type": "integer"
+                },
+                "sourceRouteCount": {
+                    "type": "integer"
+                },
+                "truncated": {
+                    "type": "boolean"
                 }
             }
         },
@@ -6163,6 +6488,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "isObserver": {
+                    "type": "boolean"
+                },
                 "latitude": {
                     "type": "number"
                 },
@@ -6170,6 +6498,12 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "nodeType": {
+                    "type": "integer"
+                },
+                "nodeTypeName": {
                     "type": "string"
                 },
                 "publicKey": {
@@ -6872,6 +7206,41 @@ const docTemplate = `{
                 },
                 "totalObservers": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.StatsHome": {
+            "type": "object",
+            "properties": {
+                "live": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveSummary"
+                },
+                "overview": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsOverview"
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "topIatas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.LiveIATACount"
+                    }
+                },
+                "topNodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopNode"
+                    }
+                },
+                "topObservers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.TopObserver"
+                    }
+                },
+                "window": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsWindow"
                 }
             }
         },
@@ -7945,6 +8314,79 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot": {
+            "type": "object",
+            "properties": {
+                "failures": {
+                    "type": "integer"
+                },
+                "lastDurationMs": {
+                    "type": "integer"
+                },
+                "lastError": {
+                    "type": "string"
+                },
+                "lastFinishedAt": {
+                    "type": "integer"
+                },
+                "lastStartedAt": {
+                    "type": "integer"
+                },
+                "lastStatus": {
+                    "type": "string"
+                },
+                "runs": {
+                    "type": "integer"
+                },
+                "successes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "hits": {
+                    "type": "integer"
+                },
+                "invalidations": {
+                    "type": "integer"
+                },
+                "misses": {
+                    "type": "integer"
+                },
+                "ttlSeconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_ratelimit.Snapshot": {
+            "type": "object",
+            "properties": {
+                "activeBuckets": {
+                    "type": "integer"
+                },
+                "allowed": {
+                    "type": "integer"
+                },
+                "burst": {
+                    "type": "integer"
+                },
+                "rejected": {
+                    "type": "integer"
+                },
+                "requestsPerMinute": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_api_handlers.APIError": {
             "type": "object",
             "properties": {
@@ -7997,10 +8439,22 @@ const docTemplate = `{
         "internal_api_handlers.HealthResponse": {
             "type": "object",
             "properties": {
+                "backgroundTasks": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot"
+                    }
+                },
                 "brokers": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal_api_handlers.HealthBroker"
+                    }
+                },
+                "cacheMetrics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot"
                     }
                 },
                 "dependencies": {
@@ -8011,6 +8465,12 @@ const docTemplate = `{
                 },
                 "mode": {
                     "type": "string"
+                },
+                "rateLimits": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_ratelimit.Snapshot"
+                    }
                 },
                 "ready": {
                     "type": "boolean"

@@ -106,6 +106,7 @@ func main() {
 	if maxConnsPerIP == 0 {
 		maxConnsPerIP = 5
 	}
+	cfg.WebSocket.MaxConnectionsPerIP = maxConnsPerIP
 
 	// resolve background intervals with defaults
 	viewRefreshInterval := cfg.Background.ViewRefresh.Duration
@@ -148,6 +149,7 @@ func main() {
 	var reader api.Reader = store
 	cacheStatus := "disabled"
 	cacheBackend := ""
+	var cacheSnapshot func() map[string]cache.CategorySnapshot
 	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
 		redisClient := cache.NewClient(
 			redisAddr,
@@ -170,6 +172,7 @@ func main() {
 			ttls := cache.ResolveTTLs(cfg.Cache)
 			reader = cache.NewCachedReader(store, redisClient, ttls)
 			defer redisClient.Close()
+			cacheSnapshot = redisClient.MetricsSnapshot
 			cacheStatus = "ok"
 			cacheBackend = redisAddr
 			log.Printf("cache: Redis connected at %s (atlas=%s live=%s stats=%s reference=%s nodes=%s observers=%s)",
@@ -285,10 +288,12 @@ func main() {
 	go scheduler.Start(ctx)
 
 	// ── HTTP server ──────────────────────────────────────────────────────────
-	r := router.New(h, reader, []*ingest.Worker{broker1, broker2}, maxConnsPerIP, cfg.CORS, handlers.HealthConfig{
-		Version:      version,
-		CacheStatus:  cacheStatus,
-		CacheBackend: cacheBackend,
+	r := router.New(h, reader, []*ingest.Worker{broker1, broker2}, cfg.WebSocket, cfg.CORS, cfg.RateLimits, handlers.HealthConfig{
+		Version:            version,
+		CacheStatus:        cacheStatus,
+		CacheBackend:       cacheBackend,
+		CacheSnapshot:      cacheSnapshot,
+		BackgroundSnapshot: scheduler.MetricsSnapshot,
 	})
 
 	srv := &http.Server{
