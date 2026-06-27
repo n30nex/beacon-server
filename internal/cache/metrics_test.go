@@ -35,6 +35,7 @@ func TestCategoryForKeyMapsHotPathPrefixes(t *testing.T) {
 		keyLiveSummaryPrefix + "all":            CategoryLive,
 		keyStatsObserverHealthPrefix + "all":    CategoryStats,
 		keyRadioPresetsPrefix + "default":       CategoryStats,
+		keyKnownRoutesPrefix + "all":            CategoryNetgraph,
 		keyNodeNeighborsPrefix + "node-id":      CategoryNodes,
 		keyObserverScopesPrefix + "observer-id": CategoryObservers,
 		keyScopeByNamePrefix + "scope":          CategoryReference,

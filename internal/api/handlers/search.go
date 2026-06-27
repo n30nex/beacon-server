@@ -37,17 +37,18 @@ type searchPage struct {
 }
 
 var searchablePages = []searchPage{
-	{"Atlas", "Regional mesh atlas", "/?tab=Atlas"},
+	{"Home", "Beacon data overview", "/?tab=Home"},
 	{"Live", "Live packet operations map", "/?tab=Live"},
+	{"Map", "Node map and route replay", "/?tab=Map"},
 	{"Packets", "Packet feed and analyzer", "/?tab=Packets"},
 	{"Channels", "Decoded channel messages", "/?tab=Channels"},
-	{"Map", "Node map and route replay", "/?tab=Map"},
 	{"Nodes", "Node directory", "/?tab=Nodes"},
 	{"Observers", "Observer fleet", "/?tab=Observers"},
+	{"Analytics", "Mesh analytics and RF data", "/?tab=Analytics"},
+	{"Netgraph", "Experimental 3D route topology", "/?tab=Netgraph"},
 	{"Routes", "Known route catalogue", "/?tab=Routes"},
-	{"Netgraph", "3D route topology explorer", "/?tab=Netgraph"},
 	{"Traces", "Trace and ping series", "/?tab=Traces"},
-	{"Stats", "Analytics and RF health", "/?tab=Stats"},
+	{"System", "API, readiness, broker, and live bus status", "/?tab=System"},
 }
 
 // SearchRouter mounts global search endpoints.

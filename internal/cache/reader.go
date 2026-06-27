@@ -45,6 +45,7 @@ const (
 	keyStatsObserverHealthPrefix  = "beacon:stats:observer-health:"
 	keyStatsObserverComparePrefix = "beacon:stats:observer-compare:"
 	keyRadioPresetsPrefix         = "beacon:radio-presets:"
+	keyKnownRoutesPrefix          = "beacon:netgraph:known-routes:"
 	keyNodePrefix                 = "beacon:node:"
 	keyNodeNeighborsPrefix        = "beacon:node:neighbors:"
 	keyNodesByIDsPrefix           = "beacon:nodes:ids:"
@@ -68,6 +69,7 @@ type CacheTTLs struct {
 	Atlas     time.Duration
 	Live      time.Duration
 	Stats     time.Duration
+	Netgraph  time.Duration
 	Reference time.Duration
 	Nodes     time.Duration
 	Observers time.Duration
@@ -182,6 +184,14 @@ func statsObserverCompareCacheKey(prefix string, filter api.StatsObserverCompare
 func statsHashPrefixCacheKey(prefix string, filter api.StatsHashPrefixFilter, cacheBucket time.Duration) string {
 	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
 	return fmt.Sprintf("%s:%s:%d", base, filter.Prefix, filter.HashSize)
+}
+
+func knownRoutesCacheKey(iatas []string, hopCount int32, cursor time.Time, limit int32) string {
+	cursorValue := int64(0)
+	if !cursor.IsZero() {
+		cursorValue = cursor.UnixMilli()
+	}
+	return fmt.Sprintf("%s%s:%d:%d:%d", keyKnownRoutesPrefix, iataCacheSegment(iatas), hopCount, cursorValue, limit)
 }
 
 // InvalidateNode removes the cached entries for a node by UUID.
@@ -627,7 +637,10 @@ func (cr *CachedReader) GetLiveSummary(ctx context.Context, filter api.LiveSumma
 
 // ListKnownRoutes implements [api.Reader].
 func (cr *CachedReader) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
-	return cr.inner.ListKnownRoutes(ctx, iatas, hopCount, cursor, limit)
+	key := knownRoutesCacheKey(iatas, hopCount, cursor, limit)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Netgraph, func() ([]api.KnownRoute, error) {
+		return cr.inner.ListKnownRoutes(ctx, iatas, hopCount, cursor, limit)
+	})
 }
 
 // GetKnownRoute implements [api.Reader].

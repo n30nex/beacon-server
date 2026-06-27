@@ -46,6 +46,7 @@ func ResolveTTLs(cfg config.CacheConfig) CacheTTLs {
 		Atlas:     resolveAtlas(cfg.TTLs.Atlas.Duration, cfg.TTL.Duration),
 		Live:      resolveLive(cfg.TTLs.Live.Duration),
 		Stats:     resolve(cfg.TTLs.Stats.Duration, cfg.TTL.Duration),
+		Netgraph:  resolveNetgraph(cfg.TTLs.Netgraph.Duration),
 		Reference: resolve(cfg.TTLs.Reference.Duration, cfg.TTL.Duration),
 		Nodes:     resolve(cfg.TTLs.Nodes.Duration, cfg.TTL.Duration),
 		Observers: resolve(cfg.TTLs.Observers.Duration, cfg.TTL.Duration),
@@ -76,6 +77,13 @@ func resolveLive(category time.Duration) time.Duration {
 		return category
 	}
 	return 5 * time.Second
+}
+
+func resolveNetgraph(category time.Duration) time.Duration {
+	if category != 0 {
+		return category
+	}
+	return 10 * time.Second
 }
 
 // Ping checks connectivity to Redis. Call this on startup to verify the

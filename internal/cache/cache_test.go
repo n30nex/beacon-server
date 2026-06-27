@@ -21,4 +21,7 @@ func TestResolveTTLsAtlasDefaultsToShortHotPath(t *testing.T) {
 	if ttls.Stats != time.Hour {
 		t.Fatalf("expected stats ttl to keep 1h default, got %s", ttls.Stats)
 	}
+	if ttls.Netgraph != 10*time.Second {
+		t.Fatalf("expected netgraph ttl to default to 10s, got %s", ttls.Netgraph)
+	}
 }

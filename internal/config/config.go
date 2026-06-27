@@ -137,6 +137,10 @@ type CacheTTLsConfig struct {
 	// These are backed by materialized views refreshed hourly, so values under 1m are rarely useful.
 	Stats duration `yaml:"stats"`
 
+	// Netgraph controls the TTL for known-route topology reads used by
+	// the 3D netgraph and route catalogue hot paths.
+	Netgraph duration `yaml:"netgraph"`
+
 	// Reference controls the TTL for mostly-static reference data
 	// (IATAs, regions, scopes). These change only when new observers
 	// arrive or config is reseeded.

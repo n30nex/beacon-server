@@ -153,6 +153,37 @@ func TestGlobalSearchTypesAndLimit(t *testing.T) {
 	}
 }
 
+func TestGlobalSearchPagesUseCurrentNavigation(t *testing.T) {
+	r := chi.NewRouter()
+	r.Mount("/search", SearchRouter(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/search?q=analytics&types=page&limit=10", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body api.SearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Items) == 0 {
+		t.Fatal("expected analytics page result")
+	}
+	if got := body.Items[0].Label; got != "Analytics" {
+		t.Fatalf("expected Analytics page result, got %q", got)
+	}
+	if got := body.Items[0].URL; got != "/?tab=Analytics" {
+		t.Fatalf("expected Analytics tab URL, got %q", got)
+	}
+
+	for _, item := range body.Items {
+		if item.Label == "Atlas" || item.Label == "Stats" {
+			t.Fatalf("legacy page label returned: %#v", item)
+		}
+	}
+}
+
 func TestGlobalSearchInvalidLimit(t *testing.T) {
 	r := chi.NewRouter()
 	r.Mount("/search", SearchRouter(stubReader{}))

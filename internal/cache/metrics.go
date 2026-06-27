@@ -14,6 +14,7 @@ const (
 	CategoryAtlas     = "atlas"
 	CategoryLive      = "live"
 	CategoryStats     = "stats"
+	CategoryNetgraph  = "netgraph"
 	CategoryReference = "reference"
 	CategoryNodes     = "nodes"
 	CategoryObservers = "observers"
@@ -58,6 +59,7 @@ func (m *Metrics) ConfigureTTLs(ttls CacheTTLs) {
 	m.categoryLocked(CategoryAtlas).ttl = ttls.Atlas
 	m.categoryLocked(CategoryLive).ttl = ttls.Live
 	m.categoryLocked(CategoryStats).ttl = ttls.Stats
+	m.categoryLocked(CategoryNetgraph).ttl = ttls.Netgraph
 	m.categoryLocked(CategoryReference).ttl = ttls.Reference
 	m.categoryLocked(CategoryNodes).ttl = ttls.Nodes
 	m.categoryLocked(CategoryObservers).ttl = ttls.Observers
@@ -176,6 +178,8 @@ func categoryForKey(key string) string {
 		return CategoryLive
 	case strings.HasPrefix(key, "beacon:stats:"), strings.HasPrefix(key, keyRadioPresetsPrefix):
 		return CategoryStats
+	case strings.HasPrefix(key, keyKnownRoutesPrefix):
+		return CategoryNetgraph
 	case strings.HasPrefix(key, keyNodePrefix), strings.HasPrefix(key, keyNodeNeighborsPrefix), strings.HasPrefix(key, keyNodesByIDsPrefix):
 		return CategoryNodes
 	case strings.HasPrefix(key, keyObserverPrefix), strings.HasPrefix(key, keyObserverScopesPrefix):
