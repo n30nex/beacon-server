@@ -1,6 +1,6 @@
 module github.com/MeshCore-Beacon/beacon-server
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/coder/websocket v1.8.14
@@ -35,9 +35,9 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/swaggo/files v0.0.0-20220610200504-28940afbdbfe // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

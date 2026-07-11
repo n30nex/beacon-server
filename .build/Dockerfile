@@ -3,7 +3,7 @@
 
 # Keep both stages immutable. Renovation is intentional: update the tag and its
 # matching Docker Hub manifest digest together, then let CI rebuild the image.
-ARG GO_IMAGE=docker.io/library/golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+ARG GO_IMAGE=docker.io/library/golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
 ARG RUNTIME_IMAGE=docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 
 FROM ${GO_IMAGE} AS builder
