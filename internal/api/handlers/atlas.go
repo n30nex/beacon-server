@@ -4,12 +4,15 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 // AtlasRouter mounts the regional Atlas endpoints.
@@ -31,6 +34,17 @@ func parseEpochMillisParam(r *http.Request, name string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return time.UnixMilli(ms), nil
+}
+
+func respondAtlasReadError(w http.ResponseWriter, err error, notFoundMessage string) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		respondError(w, http.StatusGatewayTimeout, "atlas request timed out")
+	case errors.Is(err, pgx.ErrNoRows):
+		respondError(w, http.StatusNotFound, notFoundMessage)
+	default:
+		respondError(w, http.StatusInternalServerError, "internal server error")
+	}
 }
 
 // getAtlasBriefing godoc
@@ -67,7 +81,7 @@ func getAtlasBriefing(reader api.Reader) http.HandlerFunc {
 		}
 		briefing, err := reader.GetAtlasBriefing(r.Context(), region, since, until)
 		if err != nil {
-			respondError(w, http.StatusNotFound, "atlas briefing not found")
+			respondAtlasReadError(w, err, "atlas briefing not found")
 			return
 		}
 		respond(w, http.StatusOK, briefing)
@@ -104,7 +118,7 @@ func getAtlasRegion(reader api.Reader) http.HandlerFunc {
 		}
 		summary, err := reader.GetRegionAtlasSummary(r.Context(), chi.URLParam(r, "slug"), since, until)
 		if err != nil {
-			respondError(w, http.StatusNotFound, "atlas region not found")
+			respondAtlasReadError(w, err, "atlas region not found")
 			return
 		}
 		respond(w, http.StatusOK, summary)

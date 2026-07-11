@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 type atlasReader struct {
@@ -26,6 +28,8 @@ type atlasReader struct {
 	replayRegion string
 	replayCursor int64
 	replayLimit  int32
+	summaryErr   error
+	briefErr     error
 }
 
 func (r *atlasReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
@@ -38,7 +42,7 @@ func (r *atlasReader) GetRegionAtlasSummary(ctx context.Context, slug string, si
 			IATAs:         []string{"YVR", "YYJ"},
 		},
 		Window: api.AtlasWindow{Since: since.UnixMilli(), Until: until.UnixMilli()},
-	}, nil
+	}, r.summaryErr
 }
 
 func (r *atlasReader) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
@@ -55,7 +59,7 @@ func (r *atlasReader) GetAtlasBriefing(ctx context.Context, regionSlug string, s
 			Status:      "ok",
 			HealthScore: 92,
 		},
-	}, nil
+	}, r.briefErr
 }
 
 func (r *atlasReader) ListAtlasReplay(ctx context.Context, regionSlug string, since, until time.Time, cursor int64, limit int32) (api.Page[api.AtlasReplayPacket], error) {
@@ -142,6 +146,42 @@ func TestGetAtlasBriefing_RejectsInvalidWindow(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetAtlasBriefing_ReportsDeadlineAndUnexpectedErrorsTruthfully(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "deadline", err: context.DeadlineExceeded, want: http.StatusGatewayTimeout},
+		{name: "unexpected", err: errors.New("database unavailable"), want: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Mount("/atlas", AtlasRouter(&atlasReader{briefErr: tt.err}))
+			w := httptest.NewRecorder()
+
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/atlas/briefing", nil))
+
+			if w.Code != tt.want {
+				t.Fatalf("expected %d, got %d", tt.want, w.Code)
+			}
+		})
+	}
+}
+
+func TestGetAtlasRegion_OnlyReportsMissingRowsAsNotFound(t *testing.T) {
+	r := chi.NewRouter()
+	r.Mount("/atlas", AtlasRouter(&atlasReader{summaryErr: pgx.ErrNoRows}))
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/atlas/regions/missing", nil))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
