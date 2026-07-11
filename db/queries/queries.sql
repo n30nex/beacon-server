@@ -337,6 +337,7 @@ SELECT
   p.packet_hash,
   p.payload_type,
   p.route_type,
+  p.origin_pubkey,
   p.first_heard_at,
   p.last_heard_at,
   p.scope_id,
@@ -377,6 +378,7 @@ SELECT
   p.packet_hash,
   p.payload_type,
   p.route_type,
+  p.origin_pubkey,
   p.first_heard_at,
   p.last_heard_at,
   (SELECT COUNT(*) FROM packet_observations po2 WHERE po2.packet_hash = p.packet_hash) AS observation_count,
@@ -548,7 +550,9 @@ ON CONFLICT (node_id, iata) DO UPDATE SET
 -- name: UpsertNodeShortID :exec
 INSERT INTO node_short_ids (node_id, iata, prefix_4)
 VALUES ($1, $2, $3)
-ON CONFLICT (node_id, iata) DO NOTHING;
+ON CONFLICT (node_id, iata) DO UPDATE SET
+  prefix_4 = EXCLUDED.prefix_4
+WHERE node_short_ids.prefix_4 IS DISTINCT FROM EXCLUDED.prefix_4;
 
 -- ============================================================
 -- CHANNELS

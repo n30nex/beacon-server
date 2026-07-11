@@ -326,5 +326,14 @@ func (s *Store) IsObserverByPubkey(ctx context.Context, pubkey []byte) bool {
 }
 
 func (s *Store) DeleteOldTelemetry(ctx context.Context, cutoff time.Time) error {
-	return s.q.DeleteOldTelemetry(ctx, pgtype.Timestamptz{Time: cutoff, Valid: true})
+	_, err := s.DeleteOldTelemetryCount(ctx, cutoff)
+	return err
+}
+
+func (s *Store) DeleteOldTelemetryCount(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.pool.Exec(ctx, `DELETE FROM observer_telemetry WHERE reported_at < $1`, pgtype.Timestamptz{Time: cutoff, Valid: true})
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

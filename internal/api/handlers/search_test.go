@@ -184,6 +184,55 @@ func TestGlobalSearchPagesUseCurrentNavigation(t *testing.T) {
 	}
 }
 
+func TestGlobalSearchPageAliases(t *testing.T) {
+	r := chi.NewRouter()
+	r.Mount("/search", SearchRouter(stubReader{}))
+	req := httptest.NewRequest(http.MethodGet, "/search?q=atlas&types=page&limit=10", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var body api.SearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].Label != "Analytics" || body.Items[0].Matched != "page alias" {
+		t.Fatalf("expected Atlas alias to resolve to Analytics, got %#v", body.Items)
+	}
+}
+
+type deadlineSearchReader struct{ searchReader }
+
+func (r deadlineSearchReader) ListNodes(ctx context.Context, nodeType int16, iatas []string, supportsMultibytePaths, supportsMultibyteTraces *bool, pubkey []byte, name, scope string, cursor int64, limit int32) (api.Page[api.NodeSummary], error) {
+	<-ctx.Done()
+	return api.Page[api.NodeSummary]{}, ctx.Err()
+}
+
+func TestGlobalSearchReturnsSuccessfulProvidersWhenOneTimesOut(t *testing.T) {
+	reader := deadlineSearchReader{searchReader: searchReader{observers: []api.ObserverSummary{{
+		ID: uuid.MustParse("00000000-0000-0000-0000-000000000303"), DisplayName: strPtr("Alpha Gateway"), IATA: "YVR", Status: "online",
+	}}}}
+	r := chi.NewRouter()
+	r.Mount("/search", SearchRouter(reader))
+	started := time.Now()
+	req := httptest.NewRequest(http.MethodGet, "/search?q=alpha&types=node,observer&limit=10", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if elapsed := time.Since(started); elapsed > 1400*time.Millisecond {
+		t.Fatalf("search exceeded provider/total budget: %s", elapsed)
+	}
+	var body api.SearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Partial || body.Providers["node"].Status != "timeout" || body.Providers["observer"].Status != "ok" {
+		t.Fatalf("unexpected provider metadata: partial=%v providers=%#v", body.Partial, body.Providers)
+	}
+	if len(body.Items) != 1 || body.Items[0].Type != "observer" {
+		t.Fatalf("successful provider result was not preserved: %#v", body.Items)
+	}
+}
+
 func TestGlobalSearchInvalidLimit(t *testing.T) {
 	r := chi.NewRouter()
 	r.Mount("/search", SearchRouter(stubReader{}))

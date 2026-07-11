@@ -15,42 +15,42 @@ import (
 )
 
 const (
-	keyIATAs                      = "beacon:iatas"
-	keyIATAPrefix                 = "beacon:iata:"
-	keyRegions                    = "beacon:regions"
-	keyRegionPrefix               = "beacon:region:"
-	keyRegionSlugPrefix           = "beacon:region:slug:"
-	keyAtlasRegionPrefix          = "beacon:atlas:region:"
-	keyAtlasBriefingPrefix        = "beacon:atlas:briefing:"
-	keyLiveSummaryPrefix          = "beacon:live:summary:"
-	keyScopeNames                 = "beacon:scope:names"
-	keyScopeStats                 = "beacon:scope:stats"
-	keyScopesByIATAsPrefix        = "beacon:scopes:iatas:"
-	keyScopeByNamePrefix          = "beacon:scope:name:"
-	keyStatsOverviewPrefix        = "beacon:stats:overview:"
-	keyStatsObservationsPrefix    = "beacon:stats:observations:"
-	keyStatsBreakdownPrefix       = "beacon:stats:breakdown:"
-	keyStatsTopNodesPrefix        = "beacon:stats:top-nodes:"
-	keyStatsTopObsPrefix          = "beacon:stats:top-observers:"
-	keyStatsNodeTypes             = "beacon:stats:node-types:"
-	keyStatsSummaryPrefix         = "beacon:stats:summary:"
-	keyStatsRegionsPrefix         = "beacon:stats:regions:"
-	keyStatsPayloadsPrefix        = "beacon:stats:payloads:"
-	keyStatsHashPrefix            = "beacon:stats:hash:"
-	keyStatsHashPrefixLookup      = "beacon:stats:hash-prefix:"
-	keyStatsTopologyPrefix        = "beacon:stats:topology:"
-	keyStatsSubpathsPrefix        = "beacon:stats:subpaths:"
-	keyStatsChannelsPrefix        = "beacon:stats:channels:"
-	keyStatsRFHealthPrefix        = "beacon:stats:rf-health:"
-	keyStatsObserverHealthPrefix  = "beacon:stats:observer-health:"
-	keyStatsObserverComparePrefix = "beacon:stats:observer-compare:"
-	keyRadioPresetsPrefix         = "beacon:radio-presets:"
-	keyKnownRoutesPrefix          = "beacon:netgraph:known-routes:"
-	keyNodePrefix                 = "beacon:node:"
-	keyNodeNeighborsPrefix        = "beacon:node:neighbors:"
-	keyNodesByIDsPrefix           = "beacon:nodes:ids:"
-	keyObserverPrefix             = "beacon:observer:"
-	keyObserverScopesPrefix       = "beacon:observer:scopes:"
+	keyIATAs                      = "beacon:v2:iatas"
+	keyIATAPrefix                 = "beacon:v2:iata:"
+	keyRegions                    = "beacon:v2:regions"
+	keyRegionPrefix               = "beacon:v2:region:"
+	keyRegionSlugPrefix           = "beacon:v2:region:slug:"
+	keyAtlasRegionPrefix          = "beacon:v2:atlas:region:"
+	keyAtlasBriefingPrefix        = "beacon:v2:atlas:briefing:"
+	keyLiveSummaryPrefix          = "beacon:v2:live:summary:"
+	keyScopeNames                 = "beacon:v2:scope:names"
+	keyScopeStats                 = "beacon:v2:scope:stats"
+	keyScopesByIATAsPrefix        = "beacon:v2:scopes:iatas:"
+	keyScopeByNamePrefix          = "beacon:v2:scope:name:"
+	keyStatsOverviewPrefix        = "beacon:v2:stats:overview:"
+	keyStatsObservationsPrefix    = "beacon:v2:stats:observations:"
+	keyStatsBreakdownPrefix       = "beacon:v2:stats:breakdown:"
+	keyStatsTopNodesPrefix        = "beacon:v2:stats:top-nodes:"
+	keyStatsTopObsPrefix          = "beacon:v2:stats:top-observers:"
+	keyStatsNodeTypes             = "beacon:v2:stats:node-types:"
+	keyStatsSummaryPrefix         = "beacon:v2:stats:summary:"
+	keyStatsRegionsPrefix         = "beacon:v2:stats:regions:"
+	keyStatsPayloadsPrefix        = "beacon:v2:stats:payloads:"
+	keyStatsHashPrefix            = "beacon:v2:stats:hash:"
+	keyStatsHashPrefixLookup      = "beacon:v2:stats:hash-prefix:"
+	keyStatsTopologyPrefix        = "beacon:v2:stats:topology:"
+	keyStatsSubpathsPrefix        = "beacon:v2:stats:subpaths:"
+	keyStatsChannelsPrefix        = "beacon:v2:stats:channels:"
+	keyStatsRFHealthPrefix        = "beacon:v2:stats:rf-health:"
+	keyStatsObserverHealthPrefix  = "beacon:v2:stats:observer-health:"
+	keyStatsObserverComparePrefix = "beacon:v2:stats:observer-compare:"
+	keyRadioPresetsPrefix         = "beacon:v2:radio-presets:"
+	keyKnownRoutesPrefix          = "beacon:v2:netgraph:known-routes:"
+	keyNodePrefix                 = "beacon:v2:node:"
+	keyNodeNeighborsPrefix        = "beacon:v2:node:neighbors:"
+	keyNodesByIDsPrefix           = "beacon:v2:nodes:ids:"
+	keyObserverPrefix             = "beacon:v2:observer:"
+	keyObserverScopesPrefix       = "beacon:v2:observer:scopes:"
 )
 
 // CachedReader wraps an api.Reader with a Redis caching layer.
@@ -210,36 +210,36 @@ func (cr *CachedReader) InvalidateObserver(ctx context.Context, observerID uuid.
 
 // ListIATAs implements [api.Reader].
 func (cr *CachedReader) ListIATAs(ctx context.Context) ([]api.IATA, error) {
-	return getOrSet(ctx, cr.c, keyIATAs, cr.ttl.Reference, func() ([]api.IATA, error) {
-		return cr.inner.ListIATAs(ctx)
+	return getOrSet(ctx, cr.c, keyIATAs, cr.ttl.Reference, func(fetchCtx context.Context) ([]api.IATA, error) {
+		return cr.inner.ListIATAs(fetchCtx)
 	})
 }
 
 // GetIATA implements [api.Reader].
 func (cr *CachedReader) GetIATA(ctx context.Context, iata string) (*api.IATA, error) {
-	return getOrSet(ctx, cr.c, keyIATAPrefix+iata, cr.ttl.Reference, func() (*api.IATA, error) {
-		return cr.inner.GetIATA(ctx, iata)
+	return getOrSet(ctx, cr.c, keyIATAPrefix+iata, cr.ttl.Reference, func(fetchCtx context.Context) (*api.IATA, error) {
+		return cr.inner.GetIATA(fetchCtx, iata)
 	})
 }
 
 // ListRegions implements [api.Reader].
 func (cr *CachedReader) ListRegions(ctx context.Context) ([]api.RegionSummary, error) {
-	return getOrSet(ctx, cr.c, keyRegions, cr.ttl.Reference, func() ([]api.RegionSummary, error) {
-		return cr.inner.ListRegions(ctx)
+	return getOrSet(ctx, cr.c, keyRegions, cr.ttl.Reference, func(fetchCtx context.Context) ([]api.RegionSummary, error) {
+		return cr.inner.ListRegions(fetchCtx)
 	})
 }
 
 // GetRegion implements [api.Reader].
 func (cr *CachedReader) GetRegion(ctx context.Context, regionID int32) (*api.Region, error) {
-	return getOrSet(ctx, cr.c, fmt.Sprintf("%s%d", keyRegionPrefix, regionID), cr.ttl.Reference, func() (*api.Region, error) {
-		return cr.inner.GetRegion(ctx, regionID)
+	return getOrSet(ctx, cr.c, fmt.Sprintf("%s%d", keyRegionPrefix, regionID), cr.ttl.Reference, func(fetchCtx context.Context) (*api.Region, error) {
+		return cr.inner.GetRegion(fetchCtx, regionID)
 	})
 }
 
 // GetRegionBySlug implements [api.Reader].
 func (cr *CachedReader) GetRegionBySlug(ctx context.Context, slug string) (*api.Region, error) {
-	return getOrSet(ctx, cr.c, keyRegionSlugPrefix+slug, cr.ttl.Reference, func() (*api.Region, error) {
-		return cr.inner.GetRegionBySlug(ctx, slug)
+	return getOrSet(ctx, cr.c, keyRegionSlugPrefix+slug, cr.ttl.Reference, func(fetchCtx context.Context) (*api.Region, error) {
+		return cr.inner.GetRegionBySlug(fetchCtx, slug)
 	})
 }
 
@@ -247,8 +247,8 @@ func (cr *CachedReader) GetRegionBySlug(ctx context.Context, slug string) (*api.
 func (cr *CachedReader) GetRegionAtlasSummary(ctx context.Context, slug string, since, until time.Time) (*api.RegionAtlasSummary, error) {
 	since, until = atlasCacheWindow(since, until, cr.ttl.Atlas)
 	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasRegionPrefix, slugOrAll(slug), since.UnixMilli(), until.UnixMilli())
-	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.RegionAtlasSummary, error) {
-		return cr.inner.GetRegionAtlasSummary(ctx, slug, since, until)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func(fetchCtx context.Context) (*api.RegionAtlasSummary, error) {
+		return cr.inner.GetRegionAtlasSummary(fetchCtx, slug, since, until)
 	})
 }
 
@@ -256,8 +256,8 @@ func (cr *CachedReader) GetRegionAtlasSummary(ctx context.Context, slug string, 
 func (cr *CachedReader) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
 	since, until = atlasCacheWindow(since, until, cr.ttl.Atlas)
 	key := fmt.Sprintf("%s%s:%d:%d", keyAtlasBriefingPrefix, slugOrAll(regionSlug), since.UnixMilli(), until.UnixMilli())
-	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func() (*api.AtlasBriefing, error) {
-		return cr.inner.GetAtlasBriefing(ctx, regionSlug, since, until)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Atlas, func(fetchCtx context.Context) (*api.AtlasBriefing, error) {
+		return cr.inner.GetAtlasBriefing(fetchCtx, regionSlug, since, until)
 	})
 }
 
@@ -268,15 +268,15 @@ func (cr *CachedReader) ListAtlasReplay(ctx context.Context, regionSlug string, 
 
 // GetScopeNames implements [api.Reader].
 func (cr *CachedReader) GetScopeNames(ctx context.Context) ([]string, error) {
-	return getOrSet(ctx, cr.c, keyScopeNames, cr.ttl.Reference, func() ([]string, error) {
-		return cr.inner.GetScopeNames(ctx)
+	return getOrSet(ctx, cr.c, keyScopeNames, cr.ttl.Reference, func(fetchCtx context.Context) ([]string, error) {
+		return cr.inner.GetScopeNames(fetchCtx)
 	})
 }
 
 // GetScopeStats implements [api.Reader].
 func (cr *CachedReader) GetScopeStats(ctx context.Context) ([]api.ScopeStats, error) {
-	return getOrSet(ctx, cr.c, keyScopeStats, cr.ttl.Reference, func() ([]api.ScopeStats, error) {
-		return cr.inner.GetScopeStats(ctx)
+	return getOrSet(ctx, cr.c, keyScopeStats, cr.ttl.Reference, func(fetchCtx context.Context) ([]api.ScopeStats, error) {
+		return cr.inner.GetScopeStats(fetchCtx)
 	})
 }
 
@@ -286,15 +286,15 @@ func (cr *CachedReader) GetScopesByIATAs(ctx context.Context, iatas []string) ([
 	copy(sorted, iatas)
 	sort.Strings(sorted)
 	key := keyScopesByIATAsPrefix + strings.Join(sorted, ",")
-	return getOrSet(ctx, cr.c, key, cr.ttl.Reference, func() ([]api.ScopeSummary, error) {
-		return cr.inner.GetScopesByIATAs(ctx, iatas)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Reference, func(fetchCtx context.Context) ([]api.ScopeSummary, error) {
+		return cr.inner.GetScopesByIATAs(fetchCtx, iatas)
 	})
 }
 
 // GetScopeByName implements [api.Reader].
 func (cr *CachedReader) GetScopeByName(ctx context.Context, name string) (*api.ScopeDetail, error) {
-	return getOrSet(ctx, cr.c, keyScopeByNamePrefix+name, cr.ttl.Reference, func() (*api.ScopeDetail, error) {
-		return cr.inner.GetScopeByName(ctx, name)
+	return getOrSet(ctx, cr.c, keyScopeByNamePrefix+name, cr.ttl.Reference, func(fetchCtx context.Context) (*api.ScopeDetail, error) {
+		return cr.inner.GetScopeByName(fetchCtx, name)
 	})
 }
 
@@ -307,8 +307,8 @@ func (cr *CachedReader) GetStatsOverview(ctx context.Context, iatas []string) (*
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s", keyStatsOverviewPrefix, segment)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsOverview, error) {
-		return cr.inner.GetStatsOverview(ctx, iatas)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsOverview, error) {
+		return cr.inner.GetStatsOverview(fetchCtx, iatas)
 	})
 }
 
@@ -321,8 +321,8 @@ func (cr *CachedReader) GetStatsObservations(ctx context.Context, iatas []string
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s:%d", keyStatsObservationsPrefix, segment, since.UnixMilli())
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.ObservationPoint, error) {
-		return cr.inner.GetStatsObservations(ctx, iatas, since)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.ObservationPoint, error) {
+		return cr.inner.GetStatsObservations(fetchCtx, iatas, since)
 	})
 }
 
@@ -335,8 +335,8 @@ func (cr *CachedReader) GetStatsPayloadBreakdown(ctx context.Context, iatas []st
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s:%d", keyStatsBreakdownPrefix, segment, since.UnixMilli())
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.PayloadBreakdownItem, error) {
-		return cr.inner.GetStatsPayloadBreakdown(ctx, iatas, since)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.PayloadBreakdownItem, error) {
+		return cr.inner.GetStatsPayloadBreakdown(fetchCtx, iatas, since)
 	})
 }
 
@@ -349,8 +349,8 @@ func (cr *CachedReader) GetStatsTopNodes(ctx context.Context, iatas []string, li
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s:%d", keyStatsTopNodesPrefix, segment, limit)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.TopNode, error) {
-		return cr.inner.GetStatsTopNodes(ctx, iatas, limit)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.TopNode, error) {
+		return cr.inner.GetStatsTopNodes(fetchCtx, iatas, limit)
 	})
 }
 
@@ -363,96 +363,96 @@ func (cr *CachedReader) GetStatsNodeTypes(ctx context.Context, iatas []string) (
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s", keyStatsNodeTypes, segment)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.NodeTypeCount, error) {
-		return cr.inner.GetStatsNodeTypes(ctx, iatas)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.NodeTypeCount, error) {
+		return cr.inner.GetStatsNodeTypes(fetchCtx, iatas)
 	})
 }
 
 // GetStatsSummary implements [api.Reader].
 func (cr *CachedReader) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*api.StatsSummary, error) {
 	key := statsFilterCacheKey(keyStatsSummaryPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsSummary, error) {
-		return cr.inner.GetStatsSummary(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsSummary, error) {
+		return cr.inner.GetStatsSummary(fetchCtx, filter)
 	})
 }
 
 // GetStatsRegions implements [api.Reader].
 func (cr *CachedReader) GetStatsRegions(ctx context.Context, filter api.StatsFilter) (*api.StatsRegions, error) {
 	key := statsFilterCacheKey(keyStatsRegionsPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsRegions, error) {
-		return cr.inner.GetStatsRegions(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsRegions, error) {
+		return cr.inner.GetStatsRegions(fetchCtx, filter)
 	})
 }
 
 // GetStatsPayloads implements [api.Reader].
 func (cr *CachedReader) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) (*api.StatsPayloads, error) {
 	key := statsFilterCacheKey(keyStatsPayloadsPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsPayloads, error) {
-		return cr.inner.GetStatsPayloads(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsPayloads, error) {
+		return cr.inner.GetStatsPayloads(fetchCtx, filter)
 	})
 }
 
 // GetStatsHashAnalytics implements [api.Reader].
 func (cr *CachedReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
 	key := statsFilterCacheKey(keyStatsHashPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsHashAnalytics, error) {
-		return cr.inner.GetStatsHashAnalytics(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsHashAnalytics, error) {
+		return cr.inner.GetStatsHashAnalytics(fetchCtx, filter)
 	})
 }
 
 // GetStatsHashPrefixLookup implements [api.Reader].
 func (cr *CachedReader) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
 	key := statsHashPrefixCacheKey(keyStatsHashPrefixLookup, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsHashPrefixLookup, error) {
-		return cr.inner.GetStatsHashPrefixLookup(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsHashPrefixLookup, error) {
+		return cr.inner.GetStatsHashPrefixLookup(fetchCtx, filter)
 	})
 }
 
 // GetStatsTopology implements [api.Reader].
 func (cr *CachedReader) GetStatsTopology(ctx context.Context, filter api.StatsFilter) (*api.StatsTopology, error) {
 	key := statsFilterCacheKey(keyStatsTopologyPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsTopology, error) {
-		return cr.inner.GetStatsTopology(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsTopology, error) {
+		return cr.inner.GetStatsTopology(fetchCtx, filter)
 	})
 }
 
 // GetStatsSubpaths implements [api.Reader].
 func (cr *CachedReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
 	key := statsFilterCacheKey(keyStatsSubpathsPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsSubpaths, error) {
-		return cr.inner.GetStatsSubpaths(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsSubpaths, error) {
+		return cr.inner.GetStatsSubpaths(fetchCtx, filter)
 	})
 }
 
 // GetStatsChannels implements [api.Reader].
 func (cr *CachedReader) GetStatsChannels(ctx context.Context, filter api.StatsFilter) (*api.StatsChannels, error) {
 	key := statsFilterCacheKey(keyStatsChannelsPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsChannels, error) {
-		return cr.inner.GetStatsChannels(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsChannels, error) {
+		return cr.inner.GetStatsChannels(fetchCtx, filter)
 	})
 }
 
 // GetStatsRFHealth implements [api.Reader].
 func (cr *CachedReader) GetStatsRFHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsRFHealth, error) {
 	key := statsObserverHealthCacheKey(keyStatsRFHealthPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsRFHealth, error) {
-		return cr.inner.GetStatsRFHealth(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsRFHealth, error) {
+		return cr.inner.GetStatsRFHealth(fetchCtx, filter)
 	})
 }
 
 // GetStatsObserverHealth implements [api.Reader].
 func (cr *CachedReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
 	key := statsObserverHealthCacheKey(keyStatsObserverHealthPrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsObserverHealthResponse, error) {
-		return cr.inner.GetStatsObserverHealth(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsObserverHealthResponse, error) {
+		return cr.inner.GetStatsObserverHealth(fetchCtx, filter)
 	})
 }
 
 // GetStatsObserverCompare implements [api.Reader].
 func (cr *CachedReader) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
 	key := statsObserverCompareCacheKey(keyStatsObserverComparePrefix, filter, cr.ttl.Stats)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.StatsObserverCompare, error) {
-		return cr.inner.GetStatsObserverCompare(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsObserverCompare, error) {
+		return cr.inner.GetStatsObserverCompare(fetchCtx, filter)
 	})
 }
 
@@ -465,8 +465,8 @@ func (cr *CachedReader) GetStatsTopObservers(ctx context.Context, iatas []string
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s:%d:%d", keyStatsTopObsPrefix, segment, since.UnixMilli(), limit)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.TopObserver, error) {
-		return cr.inner.GetStatsTopObservers(ctx, iatas, since, limit)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.TopObserver, error) {
+		return cr.inner.GetStatsTopObservers(fetchCtx, iatas, since, limit)
 	})
 }
 
@@ -479,22 +479,22 @@ func (cr *CachedReader) GetRadioPresets(ctx context.Context, preset string, iata
 		segment = strings.Join(sorted, ",")
 	}
 	key := fmt.Sprintf("%s%s:%s", keyRadioPresetsPrefix, preset, segment)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() ([]api.RadioPreset, error) {
-		return cr.inner.GetRadioPresets(ctx, preset, iatas)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.RadioPreset, error) {
+		return cr.inner.GetRadioPresets(fetchCtx, preset, iatas)
 	})
 }
 
 // GetNode implements [api.Reader].
 func (cr *CachedReader) GetNode(ctx context.Context, nodeID uuid.UUID) (*api.Node, error) {
-	return getOrSet(ctx, cr.c, keyNodePrefix+nodeID.String(), cr.ttl.Nodes, func() (*api.Node, error) {
-		return cr.inner.GetNode(ctx, nodeID)
+	return getOrSet(ctx, cr.c, keyNodePrefix+nodeID.String(), cr.ttl.Nodes, func(fetchCtx context.Context) (*api.Node, error) {
+		return cr.inner.GetNode(fetchCtx, nodeID)
 	})
 }
 
 // GetNodeNeighbors implements [api.Reader].
 func (cr *CachedReader) GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]api.NodeNeighbor, error) {
-	return getOrSet(ctx, cr.c, keyNodeNeighborsPrefix+nodeID.String(), cr.ttl.Nodes, func() ([]api.NodeNeighbor, error) {
-		return cr.inner.GetNodeNeighbors(ctx, nodeID)
+	return getOrSet(ctx, cr.c, keyNodeNeighborsPrefix+nodeID.String(), cr.ttl.Nodes, func(fetchCtx context.Context) ([]api.NodeNeighbor, error) {
+		return cr.inner.GetNodeNeighbors(fetchCtx, nodeID)
 	})
 }
 
@@ -506,22 +506,22 @@ func (cr *CachedReader) GetNodesByIDs(ctx context.Context, ids []uuid.UUID) (map
 	}
 	sort.Strings(strs)
 	key := keyNodesByIDsPrefix + strings.Join(strs, ",")
-	return getOrSet(ctx, cr.c, key, cr.ttl.Nodes, func() (map[uuid.UUID]*api.ResolvedNode, error) {
-		return cr.inner.GetNodesByIDs(ctx, ids)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Nodes, func(fetchCtx context.Context) (map[uuid.UUID]*api.ResolvedNode, error) {
+		return cr.inner.GetNodesByIDs(fetchCtx, ids)
 	})
 }
 
 // GetObserver implements [api.Reader].
 func (cr *CachedReader) GetObserver(ctx context.Context, observerID uuid.UUID) (*api.Observer, error) {
-	return getOrSet(ctx, cr.c, keyObserverPrefix+observerID.String(), cr.ttl.Observers, func() (*api.Observer, error) {
-		return cr.inner.GetObserver(ctx, observerID)
+	return getOrSet(ctx, cr.c, keyObserverPrefix+observerID.String(), cr.ttl.Observers, func(fetchCtx context.Context) (*api.Observer, error) {
+		return cr.inner.GetObserver(fetchCtx, observerID)
 	})
 }
 
 // GetObserverScopes implements [api.Reader].
 func (cr *CachedReader) GetObserverScopes(ctx context.Context, observerID uuid.UUID) ([]string, error) {
-	return getOrSet(ctx, cr.c, keyObserverScopesPrefix+observerID.String(), cr.ttl.Observers, func() ([]string, error) {
-		return cr.inner.GetObserverScopes(ctx, observerID)
+	return getOrSet(ctx, cr.c, keyObserverScopesPrefix+observerID.String(), cr.ttl.Observers, func(fetchCtx context.Context) ([]string, error) {
+		return cr.inner.GetObserverScopes(fetchCtx, observerID)
 	})
 }
 
@@ -630,16 +630,16 @@ func (cr *CachedReader) ListLiveBackfill(ctx context.Context, filter api.LiveBac
 func (cr *CachedReader) GetLiveSummary(ctx context.Context, filter api.LiveSummaryFilter) (*api.LiveSummary, error) {
 	filter.Since, filter.Until = liveCacheWindow(filter.Since, filter.Until, cr.ttl.Live)
 	key := fmt.Sprintf("%s%s:%d:%d", keyLiveSummaryPrefix, iataCacheSegment(filter.IATAs), filter.Since.Unix(), filter.Until.Unix())
-	return getOrSet(ctx, cr.c, key, cr.ttl.Live, func() (*api.LiveSummary, error) {
-		return cr.inner.GetLiveSummary(ctx, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Live, func(fetchCtx context.Context) (*api.LiveSummary, error) {
+		return cr.inner.GetLiveSummary(fetchCtx, filter)
 	})
 }
 
 // ListKnownRoutes implements [api.Reader].
 func (cr *CachedReader) ListKnownRoutes(ctx context.Context, iatas []string, hopCount int32, cursor time.Time, limit int32) ([]api.KnownRoute, error) {
 	key := knownRoutesCacheKey(iatas, hopCount, cursor, limit)
-	return getOrSet(ctx, cr.c, key, cr.ttl.Netgraph, func() ([]api.KnownRoute, error) {
-		return cr.inner.ListKnownRoutes(ctx, iatas, hopCount, cursor, limit)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Netgraph, func(fetchCtx context.Context) ([]api.KnownRoute, error) {
+		return cr.inner.ListKnownRoutes(fetchCtx, iatas, hopCount, cursor, limit)
 	})
 }
 
@@ -666,7 +666,7 @@ func (cr *CachedReader) ListTraceTags(ctx context.Context, iatas []string, scope
 // GetObserverTopology implements [api.Reader].
 func (cr *CachedReader) GetObserverTopology(ctx context.Context, observerID uuid.UUID, filter api.StatsFilter) (*api.ObserverTopologySummary, error) {
 	key := fmt.Sprintf("%s%s:%s", keyObserverPrefix, observerID.String(), statsFilterCacheKey("topology:", filter, cr.ttl.Stats))
-	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func() (*api.ObserverTopologySummary, error) {
-		return cr.inner.GetObserverTopology(ctx, observerID, filter)
+	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.ObserverTopologySummary, error) {
+		return cr.inner.GetObserverTopology(fetchCtx, observerID, filter)
 	})
 }

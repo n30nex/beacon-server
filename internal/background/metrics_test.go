@@ -15,9 +15,9 @@ func TestRecorderSnapshotRecordsSuccessAndFailure(t *testing.T) {
 
 	recorder.register("cleanup")
 	recorder.start("cleanup", startedAt)
-	recorder.finish("cleanup", startedAt, startedAt.Add(25*time.Millisecond), nil)
+	recorder.finish("cleanup", startedAt, startedAt.Add(25*time.Millisecond), TaskResult{AffectedRows: 7}, nil)
 	recorder.start("cleanup", startedAt.Add(time.Second))
-	recorder.finish("cleanup", startedAt.Add(time.Second), startedAt.Add(time.Second+10*time.Millisecond), errors.New("delete failed"))
+	recorder.finish("cleanup", startedAt.Add(time.Second), startedAt.Add(time.Second+10*time.Millisecond), TaskResult{Skipped: true}, errors.New("delete failed"))
 
 	snapshot := recorder.Snapshot()
 	cleanup := snapshot["cleanup"]
@@ -29,6 +29,9 @@ func TestRecorderSnapshotRecordsSuccessAndFailure(t *testing.T) {
 	}
 	if cleanup.LastDurationMs != 10 {
 		t.Fatalf("expected last duration 10ms, got %d", cleanup.LastDurationMs)
+	}
+	if cleanup.SkippedRuns != 1 {
+		t.Fatalf("expected skipped run metric, got %#v", cleanup)
 	}
 }
 

@@ -182,6 +182,7 @@ type Worker struct {
 	client           mqtt.Client
 	onNodeUpsert     func(ctx context.Context, nodeID uuid.UUID)
 	onObserverUpsert func(ctx context.Context, observerID uuid.UUID)
+	onShortIDChange  func(iata string)
 }
 
 // New creates an ingest Worker. Call Start() to connect and begin processing.
@@ -241,6 +242,10 @@ func (w *Worker) IsConnected() bool {
 func (w *Worker) SetCacheInvalidators(onNode, onObserver func(ctx context.Context, id uuid.UUID)) {
 	w.onNodeUpsert = onNode
 	w.onObserverUpsert = onObserver
+}
+
+func (w *Worker) SetDirtyIATANotifier(notify func(iata string)) {
+	w.onShortIDChange = notify
 }
 
 // subscribe registers the wildcard topic handler after (re)connect.

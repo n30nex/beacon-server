@@ -2412,6 +2412,7 @@ SELECT
   p.packet_hash,
   p.payload_type,
   p.route_type,
+  p.origin_pubkey,
   p.first_heard_at,
   p.last_heard_at,
   p.scope_id,
@@ -2461,6 +2462,7 @@ type ListPacketsRow struct {
 	PacketHash         []byte             `json:"packet_hash"`
 	PayloadType        int16              `json:"payload_type"`
 	RouteType          int16              `json:"route_type"`
+	OriginPubkey       []byte             `json:"origin_pubkey"`
 	FirstHeardAt       pgtype.Timestamptz `json:"first_heard_at"`
 	LastHeardAt        pgtype.Timestamptz `json:"last_heard_at"`
 	ScopeID            *int32             `json:"scope_id"`
@@ -2495,6 +2497,7 @@ func (q *Queries) ListPackets(ctx context.Context, arg ListPacketsParams) ([]Lis
 			&i.PacketHash,
 			&i.PayloadType,
 			&i.RouteType,
+			&i.OriginPubkey,
 			&i.FirstHeardAt,
 			&i.LastHeardAt,
 			&i.ScopeID,
@@ -2519,6 +2522,7 @@ SELECT
   p.packet_hash,
   p.payload_type,
   p.route_type,
+  p.origin_pubkey,
   p.first_heard_at,
   p.last_heard_at,
   (SELECT COUNT(*) FROM packet_observations po2 WHERE po2.packet_hash = p.packet_hash) AS observation_count,
@@ -2552,6 +2556,7 @@ type ListPacketsAfterIDRow struct {
 	PacketHash         []byte             `json:"packet_hash"`
 	PayloadType        int16              `json:"payload_type"`
 	RouteType          int16              `json:"route_type"`
+	OriginPubkey       []byte             `json:"origin_pubkey"`
 	FirstHeardAt       pgtype.Timestamptz `json:"first_heard_at"`
 	LastHeardAt        pgtype.Timestamptz `json:"last_heard_at"`
 	ObservationCount   int64              `json:"observation_count"`
@@ -2583,6 +2588,7 @@ func (q *Queries) ListPacketsAfterID(ctx context.Context, arg ListPacketsAfterID
 			&i.PacketHash,
 			&i.PayloadType,
 			&i.RouteType,
+			&i.OriginPubkey,
 			&i.FirstHeardAt,
 			&i.LastHeardAt,
 			&i.ObservationCount,
@@ -3278,7 +3284,9 @@ func (q *Queries) UpsertNodeNeighbor(ctx context.Context, arg UpsertNodeNeighbor
 const upsertNodeShortID = `-- name: UpsertNodeShortID :exec
 INSERT INTO node_short_ids (node_id, iata, prefix_4)
 VALUES ($1, $2, $3)
-ON CONFLICT (node_id, iata) DO NOTHING
+ON CONFLICT (node_id, iata) DO UPDATE SET
+  prefix_4 = EXCLUDED.prefix_4
+WHERE node_short_ids.prefix_4 IS DISTINCT FROM EXCLUDED.prefix_4
 `
 
 type UpsertNodeShortIDParams struct {

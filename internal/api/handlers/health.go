@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
+	mw "github.com/MeshCore-Beacon/beacon-server/internal/api/middleware"
 	"github.com/MeshCore-Beacon/beacon-server/internal/background"
 	"github.com/MeshCore-Beacon/beacon-server/internal/cache"
 	"github.com/MeshCore-Beacon/beacon-server/internal/ingest"
@@ -16,12 +17,42 @@ import (
 )
 
 type HealthConfig struct {
-	Version            string
-	CacheStatus        string
-	CacheBackend       string
-	RateLimitSnapshot  func() map[string]ratelimit.Snapshot
-	CacheSnapshot      func() map[string]cache.CategorySnapshot
-	BackgroundSnapshot func() map[string]background.TaskSnapshot
+	Version              string
+	Build                BuildProvenance
+	CacheStatus          string
+	CacheBackend         string
+	RateLimitSnapshot    func() map[string]ratelimit.Snapshot
+	CacheSnapshot        func() map[string]cache.CategorySnapshot
+	BackgroundSnapshot   func() map[string]background.TaskSnapshot
+	RequestSnapshot      func() mw.RequestMetricsSnapshot
+	DatabasePoolSnapshot func() DatabasePoolSnapshot
+	BackupSnapshot       func() *BackupSnapshot
+}
+
+type BuildProvenance struct {
+	Version   string `json:"version"`
+	SHA       string `json:"sha"`
+	BuildTime string `json:"buildTime,omitempty"`
+	Dirty     bool   `json:"dirty"`
+}
+
+type DatabasePoolSnapshot struct {
+	AcquiredConnections     int32 `json:"acquiredConnections"`
+	IdleConnections         int32 `json:"idleConnections"`
+	TotalConnections        int32 `json:"totalConnections"`
+	MaxConnections          int32 `json:"maxConnections"`
+	AcquireCount            int64 `json:"acquireCount"`
+	EmptyAcquireCount       int64 `json:"emptyAcquireCount"`
+	CanceledAcquireCount    int64 `json:"canceledAcquireCount"`
+	CumulativeAcquireWaitMs int64 `json:"cumulativeAcquireWaitMs"`
+}
+
+type BackupSnapshot struct {
+	Status          string `json:"status"`
+	LastBackupAt    int64  `json:"lastBackupAt,omitempty"`
+	AgeMs           int64  `json:"ageMs,omitempty"`
+	ListVerified    bool   `json:"listVerified"`
+	RestoreVerified bool   `json:"restoreVerified"`
 }
 
 type HealthDependency struct {
@@ -46,6 +77,11 @@ type HealthResponse struct {
 	RateLimits      map[string]ratelimit.Snapshot      `json:"rateLimits,omitempty"`
 	CacheMetrics    map[string]cache.CategorySnapshot  `json:"cacheMetrics,omitempty"`
 	BackgroundTasks map[string]background.TaskSnapshot `json:"backgroundTasks,omitempty"`
+	ServiceLevel    mw.ServiceLevelSnapshot            `json:"serviceLevel"`
+	RequestMetrics  map[string]mw.RouteRequestSnapshot `json:"requestMetrics,omitempty"`
+	Build           BuildProvenance                    `json:"build"`
+	DatabasePool    *DatabasePoolSnapshot              `json:"databasePool,omitempty"`
+	Backup          *BackupSnapshot                    `json:"backup,omitempty"`
 }
 
 type healthSnapshot struct {
@@ -125,6 +161,7 @@ func respondHealth(w http.ResponseWriter, snap healthSnapshot, cfg HealthConfig,
 	} else if snap.dependencies["database"].Status == "down" {
 		httpStatus = http.StatusServiceUnavailable
 	}
+	requestMetrics := requestSnapshot(cfg)
 	respond(w, httpStatus, HealthResponse{
 		Status:          snap.status,
 		Ready:           snap.ready,
@@ -136,7 +173,45 @@ func respondHealth(w http.ResponseWriter, snap healthSnapshot, cfg HealthConfig,
 		RateLimits:      rateLimitSnapshot(cfg),
 		CacheMetrics:    cacheSnapshot(cfg),
 		BackgroundTasks: backgroundSnapshot(cfg),
+		ServiceLevel:    requestMetrics.ServiceLevel,
+		RequestMetrics:  requestMetrics.Routes,
+		Build:           buildProvenance(cfg),
+		DatabasePool:    databasePoolSnapshot(cfg),
+		Backup:          backupSnapshot(cfg),
 	})
+}
+
+func requestSnapshot(cfg HealthConfig) mw.RequestMetricsSnapshot {
+	if cfg.RequestSnapshot == nil {
+		return mw.RequestMetricsSnapshot{ServiceLevel: mw.ServiceLevelSnapshot{Status: "unknown"}}
+	}
+	return cfg.RequestSnapshot()
+}
+
+func buildProvenance(cfg HealthConfig) BuildProvenance {
+	build := cfg.Build
+	if build.Version == "" {
+		build.Version = cfg.Version
+	}
+	if build.SHA == "" {
+		build.SHA = "unknown"
+	}
+	return build
+}
+
+func databasePoolSnapshot(cfg HealthConfig) *DatabasePoolSnapshot {
+	if cfg.DatabasePoolSnapshot == nil {
+		return nil
+	}
+	snapshot := cfg.DatabasePoolSnapshot()
+	return &snapshot
+}
+
+func backupSnapshot(cfg HealthConfig) *BackupSnapshot {
+	if cfg.BackupSnapshot == nil {
+		return nil
+	}
+	return cfg.BackupSnapshot()
 }
 
 func rateLimitSnapshot(cfg HealthConfig) map[string]ratelimit.Snapshot {

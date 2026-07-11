@@ -11,16 +11,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/config"
 	redis "github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 )
+
+const cacheEnvelopeVersion = 2
+
+type cacheEnvelope[T any] struct {
+	Version       int   `json:"version"`
+	GeneratedAt   int64 `json:"generatedAt"`
+	FreshUntil    int64 `json:"freshUntil"`
+	HardExpiresAt int64 `json:"hardExpiresAt"`
+	Value         T     `json:"value"`
+}
+
+type cachePolicy struct {
+	Fresh          time.Duration
+	Hard           time.Duration
+	RefreshTimeout time.Duration
+}
 
 // Client wraps a Redis client with helper methods used by CachedReader.
 type Client struct {
-	rdb     *redis.Client
-	metrics *Metrics
+	rdb      *redis.Client
+	metrics  *Metrics
+	flights  singleflight.Group
+	getBytes func(context.Context, string) ([]byte, error)
+	setBytes func(context.Context, string, []byte, time.Duration) error
 }
 
 // NewClient creates a new Redis client from the given address, password, and
@@ -33,9 +54,16 @@ func NewClient(addr, password string, db int) *Client {
 		Password: password,
 		DB:       db,
 	}
+	rdb := redis.NewClient(&opts)
 	return &Client{
-		rdb:     redis.NewClient(&opts),
+		rdb:     rdb,
 		metrics: NewMetrics(),
+		getBytes: func(ctx context.Context, key string) ([]byte, error) {
+			return rdb.Get(ctx, key).Bytes()
+		},
+		setBytes: func(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+			return rdb.Set(ctx, key, value, ttl).Err()
+		},
 	}
 }
 
@@ -123,52 +151,137 @@ func (c *Client) del(ctx context.Context, keys ...string) {
 // fails to unmarshal (corrupt or schema-changed), the entry is overwritten
 // with a fresh fetch. Errors from Set are ignored so a Redis hiccup never
 // fails a request.
-func getOrSet[T any](ctx context.Context, c *Client, key string, ttl time.Duration, fetch func() (T, error)) (T, error) {
+func getOrSet[T any](ctx context.Context, c *Client, key string, ttl time.Duration, fetch func(context.Context) (T, error)) (T, error) {
 	category := categoryForKey(key)
-	raw, err := c.rdb.Get(ctx, key).Bytes()
+	policy := policyForCategory(category, ttl)
+	raw, err := c.getBytes(ctx, key)
 	if err != nil && !errors.Is(err, redis.Nil) {
-		// real Redis error, degrade gracefully
+		// A Redis outage does not bypass coalescing or the database deadline.
 		c.metrics.recordError(category, "get", ttl)
-		return fetch()
+		return coalescedFetch(ctx, c, key, category, policy, false, fetch)
 	}
-	var zero, out T
 	if errors.Is(err, redis.Nil) {
-		// cache miss — fetch, store, return
 		c.metrics.recordMiss(category, ttl)
-		val, err := fetch()
-		if err != nil {
-			c.metrics.recordError(category, "fetch", ttl)
-			return zero, err
-		}
-		data, jsonErr := json.Marshal(val)
-		if jsonErr != nil {
-			c.metrics.recordError(category, "marshal", ttl)
-			return val, nil
-		}
-		if err := c.rdb.Set(ctx, key, data, ttl).Err(); err != nil {
-			c.metrics.recordError(category, "set", ttl)
-		}
-		return val, nil
+		return coalescedFetch(ctx, c, key, category, policy, true, fetch)
 	}
-	if err = json.Unmarshal(raw, &out); err != nil {
-		// corrupt cache entry — overwrite it
+
+	var envelope cacheEnvelope[T]
+	if err = json.Unmarshal(raw, &envelope); err != nil || envelope.Version != cacheEnvelopeVersion || envelope.HardExpiresAt <= envelope.GeneratedAt {
 		c.metrics.recordMiss(category, ttl)
 		c.metrics.recordError(category, "unmarshal", ttl)
-		val, err := fetch()
-		if err != nil {
-			c.metrics.recordError(category, "fetch", ttl)
-			return zero, err
-		}
-		data, jsonErr := json.Marshal(val)
-		if jsonErr != nil {
-			c.metrics.recordError(category, "marshal", ttl)
-			return val, nil
-		}
-		if err := c.rdb.Set(ctx, key, data, ttl).Err(); err != nil {
-			c.metrics.recordError(category, "set", ttl)
-		}
-		return val, nil
+		return coalescedFetch(ctx, c, key, category, policy, true, fetch)
 	}
+
+	now := time.Now()
+	if now.UnixMilli() >= envelope.HardExpiresAt {
+		c.metrics.recordMiss(category, ttl)
+		return coalescedFetch(ctx, c, key, category, policy, true, fetch)
+	}
+	if now.UnixMilli() >= envelope.FreshUntil {
+		c.metrics.recordStale(category, envelope.GeneratedAt)
+		refreshStale(c, key, category, policy, fetch)
+		return envelope.Value, nil
+	}
+
 	c.metrics.recordHit(category, ttl)
-	return out, nil
+	return envelope.Value, nil
+}
+
+func coalescedFetch[T any](ctx context.Context, c *Client, key, category string, policy cachePolicy, store bool, fetch func(context.Context) (T, error)) (T, error) {
+	var zero T
+	result := c.flights.DoChan(key, func() (any, error) {
+		fetchCtx, cancel := context.WithTimeout(ctx, policy.RefreshTimeout)
+		defer cancel()
+		return fetchAndMaybeStore(fetchCtx, c, key, category, policy, store, fetch)
+	})
+	select {
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	case item := <-result:
+		if item.Shared {
+			c.metrics.recordCoalesced(category)
+		}
+		if item.Err != nil {
+			return zero, item.Err
+		}
+		value, ok := item.Val.(T)
+		if !ok {
+			return zero, fmt.Errorf("cache singleflight type mismatch for %s", category)
+		}
+		return value, nil
+	}
+}
+
+func refreshStale[T any](c *Client, key, category string, policy cachePolicy, fetch func(context.Context) (T, error)) {
+	result := c.flights.DoChan(key, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), policy.RefreshTimeout)
+		defer cancel()
+		return fetchAndMaybeStore(ctx, c, key, category, policy, true, fetch)
+	})
+	go func() {
+		item := <-result
+		if item.Shared {
+			c.metrics.recordCoalesced(category)
+		}
+	}()
+}
+
+func fetchAndMaybeStore[T any](ctx context.Context, c *Client, key, category string, policy cachePolicy, store bool, fetch func(context.Context) (T, error)) (T, error) {
+	var zero T
+	value, err := fetch(ctx)
+	if err != nil {
+		c.metrics.recordError(category, "fetch", policy.Fresh)
+		c.metrics.recordRefresh(category, err)
+		return zero, err
+	}
+	if !store {
+		c.metrics.recordRefresh(category, nil)
+		return value, nil
+	}
+	now := time.Now()
+	envelope := cacheEnvelope[T]{
+		Version:       cacheEnvelopeVersion,
+		GeneratedAt:   now.UnixMilli(),
+		FreshUntil:    now.Add(policy.Fresh).UnixMilli(),
+		HardExpiresAt: now.Add(policy.Hard).UnixMilli(),
+		Value:         value,
+	}
+	data, marshalErr := json.Marshal(envelope)
+	if marshalErr != nil {
+		c.metrics.recordError(category, "marshal", policy.Fresh)
+		c.metrics.recordRefresh(category, marshalErr)
+		return value, nil
+	}
+	if err := c.setBytes(ctx, key, data, policy.Hard); err != nil {
+		c.metrics.recordError(category, "set", policy.Fresh)
+		c.metrics.recordRefresh(category, err)
+		return value, nil
+	}
+	c.metrics.recordRefresh(category, nil)
+	return value, nil
+}
+
+func policyForCategory(category string, configuredFresh time.Duration) cachePolicy {
+	if configuredFresh <= 0 {
+		configuredFresh = time.Hour
+	}
+	policy := cachePolicy{Fresh: configuredFresh, Hard: configuredFresh * 6, RefreshTimeout: 5 * time.Second}
+	switch category {
+	case CategoryAtlas:
+		policy.Hard = 5 * time.Minute
+		policy.RefreshTimeout = 5 * time.Second
+	case CategoryStats:
+		policy.Hard = 6 * time.Hour
+		policy.RefreshTimeout = 15 * time.Second
+	case CategoryNetgraph:
+		policy.Hard = time.Minute
+		policy.RefreshTimeout = 5 * time.Second
+	case CategoryLive:
+		policy.Hard = 15 * time.Second
+		policy.RefreshTimeout = 2 * time.Second
+	}
+	if policy.Hard < policy.Fresh {
+		policy.Hard = policy.Fresh
+	}
+	return policy
 }

@@ -47,6 +47,8 @@ import (
 // described in Future Features → Admin authentication.
 func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.WebSocketConfig, corsCfg config.CORSConfig, rateCfg config.RateLimitConfig, healthCfg handlers.HealthConfig) http.Handler {
 	r := chi.NewRouter()
+	requestMetrics := mw.NewRequestMetrics()
+	healthCfg.RequestSnapshot = requestMetrics.Snapshot
 	rateCfg = config.ResolveRateLimits(rateCfg)
 	restLimiter := ratelimit.New(ratelimit.Config{
 		RequestsPerMinute: rateCfg.RESTPerIPPerMinute,
@@ -98,6 +100,8 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.W
 
 	// ── Global middleware ────────────────────────────────────────────────────
 	r.Use(middleware.RequestID)
+	r.Use(requestMetrics.Handler)
+	r.Use(mw.RequestDeadline)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)

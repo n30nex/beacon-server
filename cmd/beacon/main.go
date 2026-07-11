@@ -7,12 +7,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,9 +37,14 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// version is set at build time via -ldflags "-X main.version=vX.Y.Z".
-// Falls back to "dev" when built without the flag.
-var version = "dev"
+// Build provenance is injected by the atomic promotion workflow. Local source
+// builds remain visibly dirty instead of masquerading as a promoted artifact.
+var (
+	version    = "dev"
+	commitSHA  = "unknown"
+	buildTime  = ""
+	buildDirty = "true"
+)
 
 //	@title			MeshCore Beacon API
 //	@version		1.4.1
@@ -133,17 +141,40 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, getEnv("POSTGRES_DSN"))
+	dsn := getEnv("POSTGRES_DSN")
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		log.Fatalf("failed to parse postgres DSN: %v", err)
+	}
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = "beacon-interactive"
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = getEnvDefault("POSTGRES_INTERACTIVE_STATEMENT_TIMEOUT", "5s")
+	poolConfig.ConnConfig.RuntimeParams["lock_timeout"] = getEnvDefault("POSTGRES_INTERACTIVE_LOCK_TIMEOUT", "500ms")
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		log.Fatalf("failed to connect to postgres at %s: %v", os.Getenv("POSTGRES_DSN_HOST"), err)
 	}
 	defer pool.Close()
+
+	backgroundPoolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		log.Fatalf("failed to parse background postgres DSN: %v", err)
+	}
+	backgroundPoolConfig.ConnConfig.RuntimeParams["application_name"] = "beacon-background"
+	backgroundPoolConfig.ConnConfig.RuntimeParams["statement_timeout"] = getEnvDefault("POSTGRES_BACKGROUND_STATEMENT_TIMEOUT", "10min")
+	backgroundPoolConfig.ConnConfig.RuntimeParams["lock_timeout"] = getEnvDefault("POSTGRES_BACKGROUND_LOCK_TIMEOUT", "2s")
+	backgroundPoolConfig.MaxConns = 2
+	backgroundPool, err := pgxpool.NewWithConfig(ctx, backgroundPoolConfig)
+	if err != nil {
+		log.Fatalf("failed to connect background postgres pool: %v", err)
+	}
+	defer backgroundPool.Close()
 
 	if err := db.RunMigrations(ctx, pool); err != nil {
 		log.Fatalf("migrations failed: %v", err)
 	}
 
 	store := db.New(pool)
+	backgroundStore := db.New(backgroundPool)
 
 	// ── Redis cache layer ────────────────────────────────────────────────────
 	var reader api.Reader = store
@@ -277,23 +308,51 @@ func main() {
 		broker2.SetCacheInvalidators(cr.InvalidateNode, cr.InvalidateObserver)
 	}
 
+	dirtyIATAs := background.NewDirtyIATAs(true)
+	broker1.SetDirtyIATANotifier(dirtyIATAs.Mark)
+	broker2.SetDirtyIATANotifier(dirtyIATAs.Mark)
 	go broker1.Start(ctx)
 	go broker2.Start(ctx)
 
-	scheduler := background.New([]background.Task{
-		background.ViewRefreshTask(store, viewRefreshInterval),
-		background.CleanupTask(store, telemetryRetention, packetRetention, cleanupInterval),
-		background.ReconfirmTask(store, reconfirmInterval),
-	})
+	viewRefreshTask := background.ViewRefreshTask(backgroundStore, viewRefreshInterval)
+	viewRefreshTask.Offset = durationOrDefault(cfg.Background.ViewRefreshOffset.Duration, 5*time.Minute)
+	viewRefreshTask.Timeout = durationOrDefault(cfg.Background.ViewRefreshTimeout.Duration, 10*time.Minute)
+	reconfirmTask := background.ReconfirmTask(backgroundStore, dirtyIATAs, reconfirmInterval)
+	reconfirmTask.Offset = durationOrDefault(cfg.Background.ReconfirmOffset.Duration, 20*time.Minute)
+	reconfirmTask.Timeout = durationOrDefault(cfg.Background.ReconfirmTimeout.Duration, 10*time.Minute)
+	cleanupTask := background.CleanupTask(backgroundStore, telemetryRetention, packetRetention, cleanupInterval)
+	cleanupTask.Offset = durationOrDefault(cfg.Background.CleanupOffset.Duration, 45*time.Minute)
+	cleanupTask.Timeout = durationOrDefault(cfg.Background.CleanupTimeout.Duration, 15*time.Minute)
+	scheduler := background.New([]background.Task{viewRefreshTask, reconfirmTask, cleanupTask})
 	go scheduler.Start(ctx)
 
 	// ── HTTP server ──────────────────────────────────────────────────────────
 	r := router.New(h, reader, []*ingest.Worker{broker1, broker2}, cfg.WebSocket, cfg.CORS, cfg.RateLimits, handlers.HealthConfig{
-		Version:            version,
+		Version: version,
+		Build: handlers.BuildProvenance{
+			Version:   version,
+			SHA:       commitSHA,
+			BuildTime: buildTime,
+			Dirty:     parseBuildDirty(buildDirty),
+		},
 		CacheStatus:        cacheStatus,
 		CacheBackend:       cacheBackend,
 		CacheSnapshot:      cacheSnapshot,
 		BackgroundSnapshot: scheduler.MetricsSnapshot,
+		DatabasePoolSnapshot: func() handlers.DatabasePoolSnapshot {
+			stats := pool.Stat()
+			return handlers.DatabasePoolSnapshot{
+				AcquiredConnections:     stats.AcquiredConns(),
+				IdleConnections:         stats.IdleConns(),
+				TotalConnections:        stats.TotalConns(),
+				MaxConnections:          stats.MaxConns(),
+				AcquireCount:            stats.AcquireCount(),
+				EmptyAcquireCount:       stats.EmptyAcquireCount(),
+				CanceledAcquireCount:    stats.CanceledAcquireCount(),
+				CumulativeAcquireWaitMs: stats.AcquireDuration().Milliseconds(),
+			}
+		},
+		BackupSnapshot: localBackupSnapshot,
 	})
 
 	srv := &http.Server{
@@ -342,4 +401,74 @@ func getEnv(key string) string {
 		log.Printf("warning: %s is not set", key)
 	}
 	return v
+}
+
+func getEnvDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func durationOrDefault(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func parseBuildDirty(value string) bool {
+	dirty, err := strconv.ParseBool(value)
+	if err != nil {
+		return true
+	}
+	return dirty
+}
+
+func localBackupSnapshot() *handlers.BackupSnapshot {
+	dir := getEnvDefault("BEACON_BACKUP_DIR", filepath.Join("..", ".local-backups"))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return &handlers.BackupSnapshot{Status: "missing"}
+	}
+	var newest os.FileInfo
+	var newestPath string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".manifest.json") {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil && (newest == nil || info.ModTime().After(newest.ModTime())) {
+			newest = info
+			newestPath = filepath.Join(dir, entry.Name())
+		}
+	}
+	if newest == nil {
+		return &handlers.BackupSnapshot{Status: "missing"}
+	}
+	var manifest struct {
+		CreatedAt              string `json:"createdAt"`
+		ListVerified           bool   `json:"listVerified"`
+		ScratchRestoreVerified bool   `json:"scratchRestoreVerified"`
+	}
+	data, readErr := os.ReadFile(newestPath)
+	if readErr != nil || json.Unmarshal(data, &manifest) != nil {
+		return &handlers.BackupSnapshot{Status: "invalid"}
+	}
+	createdAt, parseErr := time.Parse(time.RFC3339, manifest.CreatedAt)
+	if parseErr != nil {
+		createdAt = newest.ModTime()
+	}
+	age := time.Since(createdAt)
+	status := "ok"
+	if age > 36*time.Hour || !manifest.ListVerified {
+		status = "stale"
+	}
+	return &handlers.BackupSnapshot{
+		Status:          status,
+		LastBackupAt:    createdAt.UnixMilli(),
+		AgeMs:           age.Milliseconds(),
+		ListVerified:    manifest.ListVerified,
+		RestoreVerified: manifest.ScratchRestoreVerified,
+	}
 }

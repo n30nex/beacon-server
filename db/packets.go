@@ -98,6 +98,7 @@ func (s *Store) ListPackets(ctx context.Context, payloadType, routeType int16, i
 			PayloadTypeName:  api.PayloadTypeName(v.PayloadType),
 			RouteType:        v.RouteType,
 			RouteTypeName:    api.RouteTypeName(v.RouteType),
+			OriginPublicKey:  hex.EncodeToString(v.OriginPubkey),
 			Scope:            v.ScopeName,
 			FirstHeardAt:     v.FirstHeardAt.Time.UnixMilli(),
 			LastHeardAt:      v.LastHeardAt.Time.UnixMilli(),
@@ -145,6 +146,7 @@ func (s *Store) ListPacketsAfterID(ctx context.Context, afterObservationID int64
 			PayloadTypeName:  api.PayloadTypeName(v.PayloadType),
 			RouteType:        v.RouteType,
 			RouteTypeName:    api.RouteTypeName(v.RouteType),
+			OriginPublicKey:  hex.EncodeToString(v.OriginPubkey),
 			Scope:            v.ScopeName,
 			FirstHeardAt:     v.FirstHeardAt.Time.UnixMilli(),
 			LastHeardAt:      v.LastHeardAt.Time.UnixMilli(),
@@ -430,5 +432,14 @@ func (s *Store) GetPacketObservationCount(ctx context.Context, packetHash []byte
 }
 
 func (s *Store) DeleteOldPackets(ctx context.Context, cutoff time.Time) error {
-	return s.q.DeleteOldPackets(ctx, pgtype.Timestamptz{Time: cutoff, Valid: true})
+	_, err := s.DeleteOldPacketsCount(ctx, cutoff)
+	return err
+}
+
+func (s *Store) DeleteOldPacketsCount(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.pool.Exec(ctx, `DELETE FROM packets WHERE last_heard_at < $1`, pgtype.Timestamptz{Time: cutoff, Valid: true})
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

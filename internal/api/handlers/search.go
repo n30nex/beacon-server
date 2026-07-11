@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -19,6 +20,8 @@ import (
 
 const defaultSearchLimit int32 = 24
 const maxSearchLimit int32 = 60
+const searchProviderBudget = time.Second
+const searchTotalBudget = 1500 * time.Millisecond
 
 var searchTypeOrder = map[string]int{
 	"page":     0,
@@ -34,21 +37,23 @@ type searchPage struct {
 	label    string
 	subtitle string
 	url      string
+	aliases  string
 }
 
 var searchablePages = []searchPage{
-	{"Home", "Beacon data overview", "/?tab=Home"},
-	{"Live", "Live packet operations map", "/?tab=Live"},
-	{"Map", "Node map and route replay", "/?tab=Map"},
-	{"Packets", "Packet feed and analyzer", "/?tab=Packets"},
-	{"Channels", "Decoded channel messages", "/?tab=Channels"},
-	{"Nodes", "Node directory", "/?tab=Nodes"},
-	{"Observers", "Observer fleet", "/?tab=Observers"},
-	{"Analytics", "Mesh analytics and RF data", "/?tab=Analytics"},
-	{"Netgraph", "Experimental 3D route topology", "/?tab=Netgraph"},
-	{"Routes", "Known route catalogue", "/?tab=Routes"},
-	{"Traces", "Trace and ping series", "/?tab=Traces"},
-	{"System", "API, readiness, broker, and live bus status", "/?tab=System"},
+	{"Home", "Beacon data overview", "/?tab=Home", "dashboard summary"},
+	{"Live", "Live packet operations map", "/?tab=Live", "console realtime"},
+	{"Map", "Node map and route replay", "/?tab=Map", "geography"},
+	{"Packets", "Packet feed and analyzer", "/?tab=Packets", "messages traffic"},
+	{"Channels", "Decoded channel messages", "/?tab=Channels", "chat catalogue"},
+	{"Nodes", "Node directory", "/?tab=Nodes", "radios devices"},
+	{"Observers", "Observer fleet", "/?tab=Observers", "gateways"},
+	{"Analytics", "Mesh analytics and RF data", "/?tab=Analytics", "atlas stats statistics"},
+	{"Netgraph", "Experimental 3D route topology", "/?tab=Netgraph", "network graph"},
+	{"Routes", "Known route catalogue", "/?tab=Routes", "paths"},
+	{"Traces", "Trace and ping series", "/?tab=Traces", "pings"},
+	{"System", "API, readiness, broker, and live bus status", "/?tab=System", "diagnostics health ready readiness slo"},
+	{"Investigations", "Saved browser-local workspaces", "/?tab=Investigations", "saved workspace watchlist case"},
 }
 
 // SearchRouter mounts global search endpoints.
@@ -92,8 +97,8 @@ func globalSearch(reader api.Reader) http.HandlerFunc {
 		}
 		iatas = uniqueStrings(iatas)
 
-		items := collectSearchResults(r.Context(), reader, query, allowed, iatas, limit)
-		respond(w, http.StatusOK, api.SearchResponse{Query: query, Items: items})
+		items, providers, partial := collectSearchResults(r.Context(), reader, query, allowed, iatas, limit)
+		respond(w, http.StatusOK, api.SearchResponse{Query: query, Items: items, Partial: partial, Providers: providers})
 	}
 }
 
@@ -139,9 +144,17 @@ type searchCollector struct {
 	allowed map[string]bool
 	seen    map[string]struct{}
 	items   []api.SearchResult
+	err     error
 }
 
-func collectSearchResults(ctx context.Context, reader api.Reader, query string, allowed map[string]bool, iatas []string, limit int32) []api.SearchResult {
+type searchProviderResult struct {
+	name     string
+	items    []api.SearchResult
+	err      error
+	duration time.Duration
+}
+
+func collectSearchResults(ctx context.Context, reader api.Reader, query string, allowed map[string]bool, iatas []string, limit int32) ([]api.SearchResult, map[string]api.SearchProviderStatus, bool) {
 	c := &searchCollector{
 		query:   query,
 		needle:  strings.ToLower(query),
@@ -150,16 +163,84 @@ func collectSearchResults(ctx context.Context, reader api.Reader, query string, 
 		seen:    map[string]struct{}{},
 	}
 	c.addPages()
+	providers := map[string]api.SearchProviderStatus{"page": {Status: "ok", DurationMs: 0}}
 	if strings.TrimSpace(query) == "" {
-		return c.sorted()
+		return c.sorted(), providers, false
 	}
-	c.addPacket(ctx, reader)
-	c.addNodes(ctx, reader, iatas)
-	c.addObservers(ctx, reader, iatas)
-	c.addChannels(ctx, reader, iatas)
-	c.addRoutes(ctx, reader, iatas)
-	c.addTraces(ctx, reader, iatas)
-	return c.sorted()
+
+	type providerSpec struct {
+		name string
+		run  func(context.Context, *searchCollector)
+	}
+	specs := []providerSpec{
+		{name: "packet", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addPacket(providerCtx, reader)
+		}},
+		{name: "node", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addNodes(providerCtx, reader, iatas)
+		}},
+		{name: "observer", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addObservers(providerCtx, reader, iatas)
+		}},
+		{name: "channel", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addChannels(providerCtx, reader, iatas)
+		}},
+		{name: "route", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addRoutes(providerCtx, reader, iatas)
+		}},
+		{name: "trace", run: func(providerCtx context.Context, collector *searchCollector) {
+			collector.addTraces(providerCtx, reader, iatas)
+		}},
+	}
+	totalCtx, cancel := context.WithTimeout(ctx, searchTotalBudget)
+	defer cancel()
+	resultCh := make(chan searchProviderResult, len(specs))
+	pending := map[string]struct{}{}
+	for _, spec := range specs {
+		if !allowed[spec.name] {
+			continue
+		}
+		pending[spec.name] = struct{}{}
+		go func(spec providerSpec) {
+			started := time.Now()
+			providerCtx, providerCancel := context.WithTimeout(totalCtx, searchProviderBudget)
+			defer providerCancel()
+			collector := &searchCollector{query: query, needle: strings.ToLower(query), limit: int(limit), allowed: allowed, seen: map[string]struct{}{}}
+			spec.run(providerCtx, collector)
+			err := collector.err
+			if providerCtx.Err() != nil {
+				err = errors.Join(err, providerCtx.Err())
+			}
+			resultCh <- searchProviderResult{name: spec.name, items: collector.items, err: err, duration: time.Since(started)}
+		}(spec)
+	}
+
+	partial := false
+	for len(pending) > 0 {
+		select {
+		case result := <-resultCh:
+			delete(pending, result.name)
+			status := "ok"
+			if result.err != nil {
+				partial = true
+				status = "error"
+				if errors.Is(result.err, context.DeadlineExceeded) || errors.Is(result.err, context.Canceled) {
+					status = "timeout"
+				}
+			}
+			providers[result.name] = api.SearchProviderStatus{Status: status, DurationMs: result.duration.Milliseconds()}
+			for _, item := range result.items {
+				c.add(item)
+			}
+		case <-totalCtx.Done():
+			partial = true
+			for name := range pending {
+				providers[name] = api.SearchProviderStatus{Status: "timeout", DurationMs: searchTotalBudget.Milliseconds()}
+				delete(pending, name)
+			}
+		}
+	}
+	return c.sorted(), providers, partial
 }
 
 func (c *searchCollector) add(item api.SearchResult) {
@@ -209,7 +290,7 @@ func (c *searchCollector) score(text string, base int) (int, bool) {
 
 func (c *searchCollector) addPages() {
 	for _, p := range searchablePages {
-		text := p.label + " " + p.subtitle
+		text := p.label + " " + p.subtitle + " " + p.aliases
 		score, ok := c.score(text, 300)
 		if !ok {
 			continue
@@ -221,7 +302,12 @@ func (c *searchCollector) addPages() {
 			Subtitle: p.subtitle,
 			URL:      p.url,
 			Score:    score,
-			Matched:  "page",
+			Matched: func() string {
+				if strings.Contains(strings.ToLower(p.aliases), c.needle) && !strings.Contains(strings.ToLower(p.label+" "+p.subtitle), c.needle) {
+					return "page alias"
+				}
+				return "page"
+			}(),
 		})
 	}
 }
@@ -236,6 +322,9 @@ func (c *searchCollector) addPacket(ctx context.Context, reader api.Reader) {
 	}
 	packet, err := reader.GetPacket(ctx, hash)
 	if err != nil || packet == nil {
+		if ctx.Err() != nil {
+			c.err = ctx.Err()
+		}
 		return
 	}
 	c.add(api.SearchResult{
@@ -266,6 +355,7 @@ func (c *searchCollector) addNodes(ctx context.Context, reader api.Reader, iatas
 	}
 	page, err := reader.ListNodes(ctx, 0, iatas, nil, nil, pubkey, nameQuery, "", 0, int32(c.limit))
 	if err != nil {
+		c.err = err
 		return
 	}
 	for _, node := range page.Items {
@@ -298,6 +388,7 @@ func (c *searchCollector) addObservers(ctx context.Context, reader api.Reader, i
 	}
 	page, err := reader.ListObservers(ctx, iatas, "", "", "", c.query, "", 0, int32(c.limit))
 	if err != nil {
+		c.err = err
 		return
 	}
 	for _, obs := range page.Items {
@@ -332,6 +423,7 @@ func (c *searchCollector) addChannels(ctx context.Context, reader api.Reader, ia
 	}
 	page, err := reader.ListChannels(ctx, min32(int32(c.limit*4), 200), hash, strings.Join(iatas, ","), 0)
 	if err != nil {
+		c.err = err
 		return
 	}
 	for _, ch := range page.Items {
@@ -358,6 +450,25 @@ func (c *searchCollector) addRoutes(ctx context.Context, reader api.Reader, iata
 	if !c.allowed["route"] || len(c.needle) < 1 {
 		return
 	}
+	if routeID, err := strconv.ParseInt(c.query, 10, 64); err == nil && routeID > 0 {
+		route, getErr := reader.GetKnownRoute(ctx, routeID)
+		if getErr != nil || route == nil {
+			if ctx.Err() != nil {
+				c.err = ctx.Err()
+			}
+			return
+		}
+		c.add(api.SearchResult{Type: "route", ID: strconv.FormatInt(route.ID, 10), Label: fmt.Sprintf("%s route #%d", route.IATA, route.ID), Subtitle: fmt.Sprintf("%d hops / %d observations", route.HopCount, route.ObservationCount), URL: fmt.Sprintf("/?tab=Map&routeId=%d&routeReplay=1", route.ID), Score: 400, Matched: "route id", Metadata: map[string]any{"routeId": route.ID, "iata": route.IATA}})
+		return
+	}
+	// Textual route scans are only meaningful for an exact IATA. Avoid reusing
+	// the expensive unfiltered catalogue query as a global search provider.
+	if len(c.query) != 3 || strings.IndexFunc(strings.ToUpper(c.query), func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0 {
+		return
+	}
+	if len(iatas) == 0 {
+		iatas = []string{strings.ToUpper(c.query)}
+	}
 	targetIATAs := iatas
 	if len(targetIATAs) == 0 {
 		targetIATAs = []string{""}
@@ -369,6 +480,7 @@ func (c *searchCollector) addRoutes(ctx context.Context, reader api.Reader, iata
 		}
 		routes, err := reader.ListKnownRoutes(ctx, iatas, 0, time.Time{}, min32(int32(c.limit*3), 120))
 		if err != nil {
+			c.err = errors.Join(c.err, err)
 			continue
 		}
 		for _, route := range routes {
@@ -393,11 +505,12 @@ func (c *searchCollector) addRoutes(ctx context.Context, reader api.Reader, iata
 }
 
 func (c *searchCollector) addTraces(ctx context.Context, reader api.Reader, iatas []string) {
-	if !c.allowed["trace"] || len(c.needle) < 2 {
+	if !c.allowed["trace"] || len(c.needle) < 4 || !isHex(c.query) {
 		return
 	}
 	tags, err := reader.ListTraceTags(ctx, iatas, "", "", time.Time{}, time.Time{}, time.Time{}, min32(int32(c.limit*3), 120))
 	if err != nil {
+		c.err = err
 		return
 	}
 	for _, tag := range tags {

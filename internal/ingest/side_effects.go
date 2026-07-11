@@ -120,6 +120,8 @@ func (w *Worker) handlePayloadTypeSideEffects(ctx context.Context, packet *meshc
 		prefix4 := advert.PublicKey.PublicKeyBytes()[:4]
 		if err := w.db.UpsertNodeShortID(ctx, nodeID, iata, prefix4); err != nil {
 			log.Printf("ingest[%s]: failed to upsert node short ID for %s: %v", w.cfg.BrokerName, hex.EncodeToString(prefix4), err)
+		} else if w.onShortIDChange != nil {
+			w.onShortIDChange(iata)
 		}
 		pubkeyHex := hex.EncodeToString(advert.PublicKey.PublicKeyBytes())
 		isObserver := w.db.IsObserverByPubkey(ctx, advert.PublicKey.PublicKeyBytes())

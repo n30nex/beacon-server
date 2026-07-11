@@ -697,5 +697,31 @@ func (s *Store) GetNodeNeighbors(ctx context.Context, nodeID uuid.UUID) ([]api.N
 }
 
 func (s *Store) ReconfirmNeighbors(ctx context.Context) error {
-	return s.q.ReconfirmNeighbors(ctx)
+	_, err := s.ReconfirmNeighborsForIATAs(ctx, nil)
+	return err
+}
+
+func (s *Store) ReconfirmNeighborsForIATAs(ctx context.Context, iatas []string) (int64, error) {
+	result, err := s.pool.Exec(ctx, `
+		DELETE FROM node_neighbors nn
+		WHERE (cardinality($1::text[]) = 0 OR nn.iata = ANY($1::text[]))
+		  AND (
+			NOT EXISTS (
+				SELECT 1 FROM node_short_ids ns
+				WHERE ns.node_id = nn.neighbor_id AND ns.iata = nn.iata
+			)
+			OR (
+				SELECT COUNT(*) FROM node_short_ids ns
+				WHERE ns.iata = nn.iata
+				  AND ns.prefix_4 = (
+					SELECT prefix_4 FROM node_short_ids
+					WHERE node_id = nn.neighbor_id AND iata = nn.iata
+				  )
+			) > 1
+		  )
+	`, iatas)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

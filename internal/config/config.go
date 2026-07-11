@@ -40,6 +40,17 @@ type BackgroundConfig struct {
 	// Cleanup is how often old telemetry and packet rows are pruned.
 	// Defaults to 1h if not set.
 	Cleanup duration `yaml:"cleanup"`
+
+	// Offsets stagger the first run after startup while retaining the existing
+	// interval fields above for backward compatibility.
+	ViewRefreshOffset duration `yaml:"view_refresh_offset"`
+	ReconfirmOffset   duration `yaml:"reconfirm_offset"`
+	CleanupOffset     duration `yaml:"cleanup_offset"`
+
+	// Timeouts bound each maintenance operation independently.
+	ViewRefreshTimeout duration `yaml:"view_refresh_timeout"`
+	ReconfirmTimeout   duration `yaml:"reconfirm_timeout"`
+	CleanupTimeout     duration `yaml:"cleanup_timeout"`
 }
 
 // CORSConfig controls Cross-Origin Resource Sharing behaviour.

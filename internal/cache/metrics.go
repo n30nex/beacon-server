@@ -23,19 +23,33 @@ const (
 
 // CategorySnapshot is the health-visible cache counter set for one category.
 type CategorySnapshot struct {
-	Hits          uint64            `json:"hits"`
-	Misses        uint64            `json:"misses"`
-	Invalidations uint64            `json:"invalidations"`
-	TTLSeconds    int64             `json:"ttlSeconds,omitempty"`
-	Errors        map[string]uint64 `json:"errors,omitempty"`
+	Hits             uint64            `json:"hits"`
+	Misses           uint64            `json:"misses"`
+	Invalidations    uint64            `json:"invalidations"`
+	TTLSeconds       int64             `json:"ttlSeconds,omitempty"`
+	Errors           map[string]uint64 `json:"errors,omitempty"`
+	StaleServed      uint64            `json:"staleServed"`
+	Refreshes        uint64            `json:"refreshes"`
+	RefreshFailures  uint64            `json:"refreshFailures"`
+	Coalesced        uint64            `json:"coalesced"`
+	LastGeneratedAt  int64             `json:"lastGeneratedAt,omitempty"`
+	LastRefreshAt    int64             `json:"lastRefreshAt,omitempty"`
+	LastRefreshError string            `json:"lastRefreshError,omitempty"`
 }
 
 type categoryMetrics struct {
-	hits          uint64
-	misses        uint64
-	invalidations uint64
-	ttl           time.Duration
-	errors        map[string]uint64
+	hits             uint64
+	misses           uint64
+	invalidations    uint64
+	ttl              time.Duration
+	errors           map[string]uint64
+	staleServed      uint64
+	refreshes        uint64
+	refreshFailures  uint64
+	coalesced        uint64
+	lastGeneratedAt  int64
+	lastRefreshAt    time.Time
+	lastRefreshError string
 }
 
 // Metrics records lightweight cache events for health/status reporting.
@@ -110,6 +124,43 @@ func (m *Metrics) recordError(category, kind string, ttl time.Duration) {
 	recordTTL(stats, ttl)
 }
 
+func (m *Metrics) recordStale(category string, generatedAt int64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := m.categoryLocked(category)
+	stats.staleServed++
+	stats.lastGeneratedAt = generatedAt
+}
+
+func (m *Metrics) recordRefresh(category string, err error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := m.categoryLocked(category)
+	stats.refreshes++
+	stats.lastRefreshAt = time.Now()
+	if err != nil {
+		stats.refreshFailures++
+		stats.lastRefreshError = err.Error()
+		return
+	}
+	stats.lastRefreshError = ""
+}
+
+func (m *Metrics) recordCoalesced(category string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.categoryLocked(category).coalesced++
+}
+
 // Snapshot returns a copy of the current cache metrics grouped by category.
 func (m *Metrics) Snapshot() map[string]CategorySnapshot {
 	if m == nil {
@@ -131,10 +182,19 @@ func (m *Metrics) Snapshot() map[string]CategorySnapshot {
 	for _, key := range keys {
 		stats := m.categories[key]
 		snap := CategorySnapshot{
-			Hits:          stats.hits,
-			Misses:        stats.misses,
-			Invalidations: stats.invalidations,
-			TTLSeconds:    int64(stats.ttl.Seconds()),
+			Hits:             stats.hits,
+			Misses:           stats.misses,
+			Invalidations:    stats.invalidations,
+			TTLSeconds:       int64(stats.ttl.Seconds()),
+			StaleServed:      stats.staleServed,
+			Refreshes:        stats.refreshes,
+			RefreshFailures:  stats.refreshFailures,
+			Coalesced:        stats.coalesced,
+			LastGeneratedAt:  stats.lastGeneratedAt,
+			LastRefreshError: stats.lastRefreshError,
+		}
+		if !stats.lastRefreshAt.IsZero() {
+			snap.LastRefreshAt = stats.lastRefreshAt.UnixMilli()
 		}
 		if len(stats.errors) > 0 {
 			snap.Errors = make(map[string]uint64, len(stats.errors))
@@ -176,7 +236,7 @@ func categoryForKey(key string) string {
 		return CategoryAtlas
 	case strings.HasPrefix(key, keyLiveSummaryPrefix):
 		return CategoryLive
-	case strings.HasPrefix(key, "beacon:stats:"), strings.HasPrefix(key, keyRadioPresetsPrefix):
+	case strings.HasPrefix(key, "beacon:v2:stats:"), strings.HasPrefix(key, keyRadioPresetsPrefix):
 		return CategoryStats
 	case strings.HasPrefix(key, keyKnownRoutesPrefix):
 		return CategoryNetgraph

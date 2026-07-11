@@ -18,7 +18,7 @@ func ViewRefreshTask(store *db.Store, interval time.Duration) Task {
 	return Task{
 		Name:     "view_refresh",
 		Interval: interval,
-		Run: func(ctx context.Context) error {
+		Run: func(ctx context.Context) (TaskResult, error) {
 			var errs []error
 			if err := store.RefreshHourlyStats(ctx); err != nil {
 				log.Printf("background[view_refresh]: hourly stats: %v", err)
@@ -32,7 +32,7 @@ func ViewRefreshTask(store *db.Store, interval time.Duration) Task {
 				log.Printf("background[view_refresh]: radio presets: %v", err)
 				errs = append(errs, fmt.Errorf("radio presets: %w", err))
 			}
-			return errors.Join(errs...)
+			return TaskResult{}, errors.Join(errs...)
 		},
 	}
 }
@@ -42,14 +42,16 @@ func CleanupTask(store *db.Store, telemetryRetention, packetRetention, interval 
 	return Task{
 		Name:     "cleanup",
 		Interval: interval,
-		Run: func(ctx context.Context) error {
-			if err := store.DeleteOldTelemetry(ctx, time.Now().Add(-telemetryRetention)); err != nil {
-				return err
+		Run: func(ctx context.Context) (TaskResult, error) {
+			telemetryRows, err := store.DeleteOldTelemetryCount(ctx, time.Now().Add(-telemetryRetention))
+			if err != nil {
+				return TaskResult{}, err
 			}
-			if err := store.DeleteOldPackets(ctx, time.Now().Add(-packetRetention)); err != nil {
-				return err
+			packetRows, err := store.DeleteOldPacketsCount(ctx, time.Now().Add(-packetRetention))
+			if err != nil {
+				return TaskResult{AffectedRows: telemetryRows}, err
 			}
-			return nil
+			return TaskResult{AffectedRows: telemetryRows + packetRows}, nil
 		},
 	}
 }
@@ -57,18 +59,29 @@ func CleanupTask(store *db.Store, telemetryRetention, packetRetention, interval 
 // ReconfirmTask returns a Task that prunes stale and ambiguous resolved paths
 // and neighbors. Runs after routes to ensure neighbors are cleaned against
 // already-reconfirmed path data.
-func ReconfirmTask(store *db.Store, interval time.Duration) Task {
+func ReconfirmTask(store *db.Store, dirty *DirtyIATAs, interval time.Duration) Task {
 	return Task{
 		Name:     "reconfirm",
 		Interval: interval,
-		Run: func(ctx context.Context) error {
-			if err := store.ReconfirmRoutes(ctx); err != nil {
-				return fmt.Errorf("routes: %w", err)
+		Run: func(ctx context.Context) (TaskResult, error) {
+			all, iatas := dirty.Take()
+			if !all && len(iatas) == 0 {
+				return TaskResult{Skipped: true}, nil
 			}
-			if err := store.ReconfirmNeighbors(ctx); err != nil {
-				return fmt.Errorf("neighbors: %w", err)
+			if all {
+				iatas = nil
 			}
-			return nil
+			routeRows, err := store.ReconfirmRoutesForIATAs(ctx, iatas)
+			if err != nil {
+				dirty.Restore(all, iatas)
+				return TaskResult{}, fmt.Errorf("routes: %w", err)
+			}
+			neighborRows, err := store.ReconfirmNeighborsForIATAs(ctx, iatas)
+			if err != nil {
+				dirty.Restore(all, iatas)
+				return TaskResult{AffectedRows: routeRows}, fmt.Errorf("neighbors: %w", err)
+			}
+			return TaskResult{AffectedRows: routeRows + neighborRows}, nil
 		},
 	}
 }

@@ -26,6 +26,7 @@ type PacketSummary struct {
 	PayloadTypeName  string                `json:"payloadTypeName"`
 	RouteType        int16                 `json:"routeType"`
 	RouteTypeName    string                `json:"routeTypeName"`
+	OriginPublicKey  string                `json:"originPublicKey,omitempty"`
 	Scope            *string               `json:"scope,omitempty"` // matched transport scope name e.g. "#bc"
 	FirstHeardAt     int64                 `json:"firstHeardAt"`    // epoch ms
 	LastHeardAt      int64                 `json:"lastHeardAt"`     // epoch ms

@@ -18,6 +18,13 @@ type SearchResult struct {
 
 // SearchResponse is returned by GET /api/v1/search.
 type SearchResponse struct {
-	Query string         `json:"query"`
-	Items []SearchResult `json:"items"`
+	Query     string                          `json:"query"`
+	Items     []SearchResult                  `json:"items"`
+	Partial   bool                            `json:"partial"`
+	Providers map[string]SearchProviderStatus `json:"providers,omitempty"`
+}
+
+type SearchProviderStatus struct {
+	Status     string `json:"status"`
+	DurationMs int64  `json:"durationMs"`
 }

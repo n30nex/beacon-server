@@ -313,7 +313,35 @@ func (s *Store) SearchCrossIATARoutes(ctx context.Context, fromHash, fromIATA, t
 }
 
 func (s *Store) ReconfirmRoutes(ctx context.Context) error {
-	return s.q.ReconfirmRoutes(ctx)
+	_, err := s.ReconfirmRoutesForIATAs(ctx, nil)
+	return err
+}
+
+func (s *Store) ReconfirmRoutesForIATAs(ctx context.Context, iatas []string) (int64, error) {
+	result, err := s.pool.Exec(ctx, `
+		DELETE FROM known_routes kr
+		WHERE (cardinality($1::text[]) = 0 OR kr.iata = ANY($1::text[]))
+		  AND (
+			EXISTS (
+				SELECT 1 FROM unnest(kr.node_ids) AS hop_node_id
+				WHERE NOT EXISTS (
+					SELECT 1 FROM node_short_ids ns
+					WHERE ns.node_id = hop_node_id AND ns.iata = kr.iata
+				)
+			)
+			OR EXISTS (
+				SELECT 1 FROM unnest(kr.hash_prefix) AS hop_prefix
+				WHERE (
+					SELECT COUNT(*) FROM node_short_ids ns
+					WHERE ns.iata = kr.iata AND ns.prefix_4 = hop_prefix
+				) > 1
+			)
+		  )
+	`, iatas)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 // extractFromNode returns the portion of a route starting at the given node.
