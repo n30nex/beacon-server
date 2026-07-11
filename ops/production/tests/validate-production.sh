@@ -23,6 +23,18 @@ grep -Fq 'BEACON_WEB_IMAGE must be an immutable digest reference' "$compose_file
 grep -Fq '    internal: true' "$compose_file"
 grep -Fq '    networks: [backend, egress]' "$compose_file"
 grep -Fq '  egress: {}' "$compose_file"
+python3 - "$compose_file" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+def service(name: str) -> str:
+    match = re.search(rf"(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z0-9_-]*:\n|^networks:\n)", text)
+    assert match, name
+    return match.group(1)
+assert "    networks: [backend]\n" in service("postgres")
+assert "    networks: [backend]\n" in service("redis")
+assert "    networks: [backend, egress]\n" in service("api")
+assert "    networks: [edge, backend]\n" in service("web")
+PY
 grep -Fq '      - "80:8080"' "$compose_file"
 grep -Fq '    user: "65532:65532"' "$compose_file"
 grep -Fq '    mem_limit: 448m' "$compose_file"

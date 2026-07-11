@@ -37,7 +37,7 @@ services:
       retries: 12
       start_period: 30s
     stop_grace_period: 60s
-    networks: [backend, egress]
+    networks: [backend]
 
   redis:
     image: docker.io/library/redis@sha256:0a972391db0b24ec336e35d1bc98b237237e26f82bf5120cf2f6b1688d1df973
@@ -97,7 +97,7 @@ services:
       redis:
         condition: service_healthy
     stop_grace_period: 45s
-    networks: [backend]
+    networks: [backend, egress]
 
   web:
     image: ${BEACON_WEB_IMAGE:?BEACON_WEB_IMAGE must be an immutable digest reference}
