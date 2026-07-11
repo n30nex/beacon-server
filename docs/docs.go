@@ -6259,6 +6259,9 @@ const docTemplate = `{
                 "observationCount": {
                     "type": "integer"
                 },
+                "originPublicKey": {
+                    "type": "string"
+                },
                 "packetHash": {
                     "description": "hex-encoded",
                     "type": "string"
@@ -6648,6 +6651,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api.SearchProviderStatus": {
+            "type": "object",
+            "properties": {
+                "durationMs": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MeshCore-Beacon_beacon-server_internal_api.SearchResponse": {
             "type": "object",
             "properties": {
@@ -6655,6 +6669,15 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.SearchResult"
+                    }
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "providers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.SearchProviderStatus"
                     }
                 },
                 "query": {
@@ -8314,10 +8337,75 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.RouteRequestSnapshot": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "errors": {
+                    "type": "integer"
+                },
+                "hardDeadlineBreaches": {
+                    "type": "integer"
+                },
+                "hardDeadlineMs": {
+                    "type": "integer"
+                },
+                "lastDurationMs": {
+                    "type": "integer"
+                },
+                "lastStatus": {
+                    "type": "integer"
+                },
+                "latencyBuckets": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "p95DurationMs": {
+                    "type": "integer"
+                },
+                "slowRequests": {
+                    "type": "integer"
+                },
+                "targetMs": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.ServiceLevelSnapshot": {
+            "type": "object",
+            "properties": {
+                "lastUpdated": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "targetMs": {
+                    "type": "integer"
+                },
+                "windowSeconds": {
+                    "type": "integer"
+                },
+                "worstP95Ms": {
+                    "type": "integer"
+                },
+                "worstRoute": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot": {
             "type": "object",
             "properties": {
                 "failures": {
+                    "type": "integer"
+                },
+                "lastAffectedRows": {
                     "type": "integer"
                 },
                 "lastDurationMs": {
@@ -8335,10 +8423,19 @@ const docTemplate = `{
                 "lastStatus": {
                     "type": "string"
                 },
+                "nextRunAt": {
+                    "type": "integer"
+                },
                 "runs": {
                     "type": "integer"
                 },
+                "skippedRuns": {
+                    "type": "integer"
+                },
                 "successes": {
+                    "type": "integer"
+                },
+                "timeoutMs": {
                     "type": "integer"
                 }
             }
@@ -8346,6 +8443,9 @@ const docTemplate = `{
         "github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot": {
             "type": "object",
             "properties": {
+                "coalesced": {
+                    "type": "integer"
+                },
                 "errors": {
                     "type": "object",
                     "additionalProperties": {
@@ -8359,7 +8459,25 @@ const docTemplate = `{
                 "invalidations": {
                     "type": "integer"
                 },
+                "lastGeneratedAt": {
+                    "type": "integer"
+                },
+                "lastRefreshAt": {
+                    "type": "integer"
+                },
+                "lastRefreshError": {
+                    "type": "string"
+                },
                 "misses": {
+                    "type": "integer"
+                },
+                "refreshFailures": {
+                    "type": "integer"
+                },
+                "refreshes": {
+                    "type": "integer"
+                },
+                "staleServed": {
                     "type": "integer"
                 },
                 "ttlSeconds": {
@@ -8400,6 +8518,26 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api_handlers.BackupSnapshot": {
+            "type": "object",
+            "properties": {
+                "ageMs": {
+                    "type": "integer"
+                },
+                "lastBackupAt": {
+                    "type": "integer"
+                },
+                "listVerified": {
+                    "type": "boolean"
+                },
+                "restoreVerified": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api_handlers.BrokerStatus": {
             "type": "object",
             "properties": {
@@ -8408,6 +8546,52 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.BuildProvenance": {
+            "type": "object",
+            "properties": {
+                "buildTime": {
+                    "type": "string"
+                },
+                "dirty": {
+                    "type": "boolean"
+                },
+                "sha": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.DatabasePoolSnapshot": {
+            "type": "object",
+            "properties": {
+                "acquireCount": {
+                    "type": "integer"
+                },
+                "acquiredConnections": {
+                    "type": "integer"
+                },
+                "canceledAcquireCount": {
+                    "type": "integer"
+                },
+                "cumulativeAcquireWaitMs": {
+                    "type": "integer"
+                },
+                "emptyAcquireCount": {
+                    "type": "integer"
+                },
+                "idleConnections": {
+                    "type": "integer"
+                },
+                "maxConnections": {
+                    "type": "integer"
+                },
+                "totalConnections": {
+                    "type": "integer"
                 }
             }
         },
@@ -8445,17 +8629,26 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot"
                     }
                 },
+                "backup": {
+                    "$ref": "#/definitions/internal_api_handlers.BackupSnapshot"
+                },
                 "brokers": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal_api_handlers.HealthBroker"
                     }
                 },
+                "build": {
+                    "$ref": "#/definitions/internal_api_handlers.BuildProvenance"
+                },
                 "cacheMetrics": {
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot"
                     }
+                },
+                "databasePool": {
+                    "$ref": "#/definitions/internal_api_handlers.DatabasePoolSnapshot"
                 },
                 "dependencies": {
                     "type": "object",
@@ -8475,8 +8668,17 @@ const docTemplate = `{
                 "ready": {
                     "type": "boolean"
                 },
+                "requestMetrics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.RouteRequestSnapshot"
+                    }
+                },
                 "serverTime": {
                     "type": "integer"
+                },
+                "serviceLevel": {
+                    "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.ServiceLevelSnapshot"
                 },
                 "status": {
                     "type": "string"

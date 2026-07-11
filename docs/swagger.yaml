@@ -1540,6 +1540,8 @@ definitions:
         $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.PacketLatestObserver'
       observationCount:
         type: integer
+      originPublicKey:
+        type: string
       packetHash:
         description: hex-encoded
         type: string
@@ -1800,12 +1802,25 @@ definitions:
       observerCount:
         type: integer
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api.SearchProviderStatus:
+    properties:
+      durationMs:
+        type: integer
+      status:
+        type: string
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_api.SearchResponse:
     properties:
       items:
         items:
           $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.SearchResult'
         type: array
+      partial:
+        type: boolean
+      providers:
+        additionalProperties:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.SearchProviderStatus'
+        type: object
       query:
         type: string
     type: object
@@ -2901,9 +2916,52 @@ definitions:
         description: TRACE or PING
         type: string
     type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.RouteRequestSnapshot:
+    properties:
+      count:
+        type: integer
+      errors:
+        type: integer
+      hardDeadlineBreaches:
+        type: integer
+      hardDeadlineMs:
+        type: integer
+      lastDurationMs:
+        type: integer
+      lastStatus:
+        type: integer
+      latencyBuckets:
+        additionalProperties:
+          format: int64
+          type: integer
+        type: object
+      p95DurationMs:
+        type: integer
+      slowRequests:
+        type: integer
+      targetMs:
+        type: integer
+    type: object
+  github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.ServiceLevelSnapshot:
+    properties:
+      lastUpdated:
+        type: integer
+      status:
+        type: string
+      targetMs:
+        type: integer
+      windowSeconds:
+        type: integer
+      worstP95Ms:
+        type: integer
+      worstRoute:
+        type: string
+    type: object
   github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot:
     properties:
       failures:
+        type: integer
+      lastAffectedRows:
         type: integer
       lastDurationMs:
         type: integer
@@ -2915,13 +2973,21 @@ definitions:
         type: integer
       lastStatus:
         type: string
+      nextRunAt:
+        type: integer
       runs:
         type: integer
+      skippedRuns:
+        type: integer
       successes:
+        type: integer
+      timeoutMs:
         type: integer
     type: object
   github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot:
     properties:
+      coalesced:
+        type: integer
       errors:
         additionalProperties:
           format: int64
@@ -2931,7 +2997,19 @@ definitions:
         type: integer
       invalidations:
         type: integer
+      lastGeneratedAt:
+        type: integer
+      lastRefreshAt:
+        type: integer
+      lastRefreshError:
+        type: string
       misses:
+        type: integer
+      refreshFailures:
+        type: integer
+      refreshes:
+        type: integer
+      staleServed:
         type: integer
       ttlSeconds:
         type: integer
@@ -2958,12 +3036,55 @@ definitions:
         description: e.g. "channel not found"
         type: string
     type: object
+  internal_api_handlers.BackupSnapshot:
+    properties:
+      ageMs:
+        type: integer
+      lastBackupAt:
+        type: integer
+      listVerified:
+        type: boolean
+      restoreVerified:
+        type: boolean
+      status:
+        type: string
+    type: object
   internal_api_handlers.BrokerStatus:
     properties:
       connected:
         type: boolean
       name:
         type: string
+    type: object
+  internal_api_handlers.BuildProvenance:
+    properties:
+      buildTime:
+        type: string
+      dirty:
+        type: boolean
+      sha:
+        type: string
+      version:
+        type: string
+    type: object
+  internal_api_handlers.DatabasePoolSnapshot:
+    properties:
+      acquireCount:
+        type: integer
+      acquiredConnections:
+        type: integer
+      canceledAcquireCount:
+        type: integer
+      cumulativeAcquireWaitMs:
+        type: integer
+      emptyAcquireCount:
+        type: integer
+      idleConnections:
+        type: integer
+      maxConnections:
+        type: integer
+      totalConnections:
+        type: integer
     type: object
   internal_api_handlers.HealthBroker:
     properties:
@@ -2987,14 +3108,20 @@ definitions:
         additionalProperties:
           $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_background.TaskSnapshot'
         type: object
+      backup:
+        $ref: '#/definitions/internal_api_handlers.BackupSnapshot'
       brokers:
         items:
           $ref: '#/definitions/internal_api_handlers.HealthBroker'
         type: array
+      build:
+        $ref: '#/definitions/internal_api_handlers.BuildProvenance'
       cacheMetrics:
         additionalProperties:
           $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_cache.CategorySnapshot'
         type: object
+      databasePool:
+        $ref: '#/definitions/internal_api_handlers.DatabasePoolSnapshot'
       dependencies:
         additionalProperties:
           $ref: '#/definitions/internal_api_handlers.HealthDependency'
@@ -3007,8 +3134,14 @@ definitions:
         type: object
       ready:
         type: boolean
+      requestMetrics:
+        additionalProperties:
+          $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.RouteRequestSnapshot'
+        type: object
       serverTime:
         type: integer
+      serviceLevel:
+        $ref: '#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api_middleware.ServiceLevelSnapshot'
       status:
         type: string
       version:
