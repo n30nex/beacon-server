@@ -14,6 +14,14 @@ import (
 // Dependency readiness remains independent from timeout-driven SLO degradation.
 func RequestDeadline(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A WebSocket is a long-lived session. Applying the ordinary five-second
+		// HTTP deadline cancels the upgraded connection and forces Live clients
+		// into a reconnect loop.
+		if r.URL.Path == "/ws" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		deadline := 5 * time.Second
 		switch {
 		case r.URL.Path == "/healthz" || r.URL.Path == "/readyz":

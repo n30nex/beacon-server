@@ -1,8 +1,8 @@
 [Unit]
-Description=Run Beacon PostgreSQL backup daily at 03:30
+Description=Run Beacon PostgreSQL backup daily at 03:30 America/Toronto
 
 [Timer]
-OnCalendar=*-*-* 03:30:00
+OnCalendar=*-*-* 03:30:00 America/Toronto
 Persistent=true
 Unit=beacon-backup.service
 

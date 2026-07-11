@@ -464,7 +464,7 @@ func localBackupSnapshot() *handlers.BackupSnapshot {
 	}
 	createdAt, parseErr := time.Parse(time.RFC3339, manifest.CreatedAt)
 	if parseErr != nil {
-		createdAt = newest.ModTime()
+		return &handlers.BackupSnapshot{Status: "invalid"}
 	}
 	age := time.Since(createdAt)
 	status := "ok"

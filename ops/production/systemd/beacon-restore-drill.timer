@@ -1,8 +1,8 @@
 [Unit]
-Description=Run Beacon scratch restore drill on the first day of each month
+Description=Run Beacon scratch restore drill monthly at 04:30 America/Toronto
 
 [Timer]
-OnCalendar=*-*-01 04:30:00
+OnCalendar=*-*-01 04:30:00 America/Toronto
 Persistent=true
 Unit=beacon-restore-drill.service
 

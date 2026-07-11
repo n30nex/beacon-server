@@ -5,8 +5,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 require_root
 require_cmd docker
-mkdir -p "$STATE_DIR" "$BACKUP_DIR"
-exec 9>"/run/lock/beacon-production.lock"
-flock -w 30 9 || die "another Beacon operation holds the deployment lock"
+mkdir -p "$STATE_DIR"
+install -d -m 0700 -o root -g root "$BACKUP_DIR"
+install -d -m 0750 -o root -g 65532 "$BACKUP_METADATA_DIR"
+acquire_production_lock 30
 compose_with_state "${1:-$CURRENT_IMAGES}" up -d --no-deps postgres redis
 log "PostgreSQL and Redis are running; API and web were not started"

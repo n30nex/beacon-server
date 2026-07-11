@@ -78,10 +78,10 @@ services:
       LISTEN_ADDR: :8080
       CONFIG_PATH: /etc/beacon/config.yaml
       REDIS_ADDR: redis:6379
-      BEACON_BACKUP_DIR: /var/backups/beacon
+      BEACON_BACKUP_DIR: /var/lib/beacon/backup-metadata
     volumes:
       - ${BEACON_CONFIG_FILE:-/etc/beacon/config.yaml}:/etc/beacon/config.yaml:ro
-      - ${BEACON_BACKUP_DIR:-/var/backups/beacon}:/var/backups/beacon:ro
+      - ${BEACON_BACKUP_METADATA_DIR:-/var/lib/beacon/backup-metadata}:/var/lib/beacon/backup-metadata:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m,mode=1777
     expose: ["8080"]
