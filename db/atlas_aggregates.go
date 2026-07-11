@@ -22,16 +22,11 @@ type atlasAggregateBounds struct {
 	fullEnd   time.Time
 }
 
-func ceilHour(value time.Time) time.Time {
-	floor := value.Truncate(time.Hour)
-	if value.Equal(floor) {
-		return floor
-	}
-	return floor.Add(time.Hour)
-}
-
 func atlasBounds(since, until time.Time) atlasAggregateBounds {
-	return atlasAggregateBounds{fullStart: ceilHour(since), fullEnd: until.Truncate(time.Hour)}
+	return atlasAggregateBounds{
+		fullStart: since.Truncate(time.Hour),
+		fullEnd:   until.Truncate(time.Hour).Add(time.Hour),
+	}
 }
 
 func canonicalAtlasWindow(since, until, now time.Time) bool {
@@ -44,8 +39,9 @@ func canonicalAtlasWindow(since, until, now time.Time) bool {
 }
 
 // atlasAggregatesAvailable verifies every complete hour needed by the current
-// window and, when requested, its previous comparison window. Boundary
-// fragments are always read from raw observations to preserve exact semantics.
+// window and, when requested, its previous comparison window. Canonical
+// briefing counts intentionally use overlapping hourly bucket semantics;
+// custom windows retain exact raw-query semantics.
 func (s *Store) atlasAggregatesAvailable(ctx context.Context, since, until time.Time, includePrevious bool) bool {
 	if !canonicalAtlasWindow(since, until, time.Now()) {
 		return false
@@ -155,10 +151,12 @@ func (s *Store) refreshAtlasAggregateHour(ctx context.Context, hour time.Time) (
 	}
 
 	statements := []string{
-		`INSERT INTO atlas_hourly_iata_aggregates (hour, iata, observation_count, packet_hashes, observer_ids)
+		`INSERT INTO atlas_hourly_iata_aggregates (hour, iata, observation_count, packet_hashes, observer_ids, unique_packet_count, active_observer_count)
 SELECT $1, po.iata, COUNT(*)::bigint,
        array_agg(DISTINCT po.packet_hash ORDER BY po.packet_hash),
-       array_agg(DISTINCT po.observer_id ORDER BY po.observer_id)
+       array_agg(DISTINCT po.observer_id ORDER BY po.observer_id),
+       COUNT(DISTINCT po.packet_hash)::bigint,
+       COUNT(DISTINCT po.observer_id)::bigint
 FROM packet_observations po
 WHERE po.heard_at >= $1 AND po.heard_at < $2
 GROUP BY po.iata`,
@@ -201,42 +199,24 @@ ON CONFLICT (hour) DO UPDATE SET refreshed_at = EXCLUDED.refreshed_at`, hour); e
 func (s *Store) getAtlasIATAsAggregated(ctx context.Context, since, until time.Time, iatas string) ([]api.AtlasIATA, error) {
 	bounds := atlasBounds(since, until)
 	rows, err := s.pool.Query(ctx, `
-WITH sources AS MATERIALIZED (
-  SELECT a.iata, a.observation_count, a.packet_hashes, a.observer_ids
+WITH counts AS (
+  SELECT a.iata,
+         SUM(a.observation_count)::bigint AS observation_count,
+         SUM(a.unique_packet_count)::bigint AS unique_packets,
+         SUM(a.active_observer_count)::bigint AS active_observers
   FROM atlas_hourly_iata_aggregates a
-  WHERE a.hour >= $4 AND a.hour < $5
-    AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
-  UNION ALL
-  SELECT po.iata, COUNT(*)::bigint,
-         array_agg(DISTINCT po.packet_hash ORDER BY po.packet_hash),
-         array_agg(DISTINCT po.observer_id ORDER BY po.observer_id)
-  FROM packet_observations po
-  WHERE po.heard_at >= $1 AND po.heard_at <= $2
-    AND (po.heard_at < $4 OR po.heard_at >= $5)
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY po.iata
-), counts AS (
-  SELECT iata, SUM(observation_count)::bigint AS observation_count
-  FROM sources GROUP BY iata
-), packets AS (
-  SELECT s.iata, COUNT(DISTINCT packet_hash)::bigint AS unique_packets
-  FROM sources s CROSS JOIN LATERAL unnest(s.packet_hashes) packet_hash
-  GROUP BY s.iata
-), observers AS (
-  SELECT s.iata, COUNT(DISTINCT observer_id)::bigint AS active_observers
-  FROM sources s CROSS JOIN LATERAL unnest(s.observer_ids) observer_id
-  GROUP BY s.iata
+  WHERE a.hour >= $2 AND a.hour < $3
+    AND ($1::text = '' OR a.iata = ANY(string_to_array($1::text, ',')))
+  GROUP BY a.iata
 )
 SELECT i.iata, i.display_name, i.approx_lat, i.approx_lng,
        COALESCE(c.observation_count, 0)::bigint,
-       COALESCE(p.unique_packets, 0)::bigint,
-       COALESCE(o.active_observers, 0)::bigint
+       COALESCE(c.unique_packets, 0)::bigint,
+       COALESCE(c.active_observers, 0)::bigint
 FROM iata_codes i
 LEFT JOIN counts c ON c.iata = i.iata
-LEFT JOIN packets p ON p.iata = i.iata
-LEFT JOIN observers o ON o.iata = i.iata
-WHERE ($3::text = '' OR i.iata = ANY(string_to_array($3::text, ',')))
-ORDER BY COALESCE(c.observation_count, 0) DESC, i.iata`, since, until, iatas, bounds.fullStart, bounds.fullEnd)
+WHERE ($1::text = '' OR i.iata = ANY(string_to_array($1::text, ',')))
+ORDER BY COALESCE(c.observation_count, 0) DESC, i.iata`, iatas, bounds.fullStart, bounds.fullEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -258,17 +238,9 @@ func (s *Store) getAtlasPayloadAndRouteMixAggregated(ctx context.Context, since,
 WITH base AS MATERIALIZED (
   SELECT a.payload_type, a.route_type, SUM(a.observation_count)::bigint AS count
   FROM atlas_hourly_mix_aggregates a
-  WHERE a.hour >= $4 AND a.hour < $5
-    AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
+  WHERE a.hour >= $2 AND a.hour < $3
+    AND ($1::text = '' OR a.iata = ANY(string_to_array($1::text, ',')))
   GROUP BY a.payload_type, a.route_type
-  UNION ALL
-  SELECT p.payload_type, p.route_type, COUNT(*)::bigint
-  FROM packet_observations po
-  JOIN packets p ON p.packet_hash = po.packet_hash
-  WHERE po.heard_at >= $1 AND po.heard_at <= $2
-    AND (po.heard_at < $4 OR po.heard_at >= $5)
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY p.payload_type, p.route_type
 ), payload_mix AS (
   SELECT payload_type AS code, SUM(count)::bigint AS count FROM base GROUP BY payload_type
 ), route_mix AS (
@@ -278,7 +250,7 @@ WITH base AS MATERIALIZED (
 SELECT 'payload', code, count FROM payload_mix
 UNION ALL
 SELECT 'route', code, count FROM route_mix
-ORDER BY 1, 3 DESC, 2`, since, until, iatas, bounds.fullStart, bounds.fullEnd)
+ORDER BY 1, 3 DESC, 2`, iatas, bounds.fullStart, bounds.fullEnd)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -307,16 +279,8 @@ func (s *Store) getAtlasTopNodesAggregated(ctx context.Context, since, until tim
 WITH source AS (
   SELECT a.iata, a.origin_pubkey, a.observation_count, a.last_heard
   FROM atlas_hourly_node_aggregates a
-  WHERE a.hour >= $4 AND a.hour < $5
-    AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
-  UNION ALL
-  SELECT po.iata, p.origin_pubkey, COUNT(*)::bigint, MAX(po.heard_at)
-  FROM packet_observations po JOIN packets p ON p.packet_hash = po.packet_hash
-  WHERE po.heard_at >= $1 AND po.heard_at <= $2
-    AND (po.heard_at < $4 OR po.heard_at >= $5)
-    AND p.origin_pubkey IS NOT NULL
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY po.iata, p.origin_pubkey
+  WHERE a.hour >= $2 AND a.hour < $3
+    AND ($1::text = '' OR a.iata = ANY(string_to_array($1::text, ',')))
 ), combined AS (
   SELECT origin_pubkey, MIN(iata)::text AS iata,
          SUM(observation_count)::bigint AS observation_count, MAX(last_heard) AS last_heard
@@ -325,7 +289,7 @@ WITH source AS (
 SELECT n.id, n.name, n.node_type, c.iata, c.observation_count, c.last_heard
 FROM combined c JOIN nodes n ON n.public_key = c.origin_pubkey
 ORDER BY c.observation_count DESC, c.last_heard DESC
-LIMIT $6`, since, until, iatas, bounds.fullStart, bounds.fullEnd, limit)
+LIMIT $4`, iatas, bounds.fullStart, bounds.fullEnd, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -350,15 +314,8 @@ func (s *Store) getAtlasTopObserversAggregated(ctx context.Context, since, until
 WITH source AS (
   SELECT a.iata, a.observer_id, a.observation_count
   FROM atlas_hourly_observer_aggregates a
-  WHERE a.hour >= $4 AND a.hour < $5
-    AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
-  UNION ALL
-  SELECT po.iata, po.observer_id, COUNT(*)::bigint
-  FROM packet_observations po
-  WHERE po.heard_at >= $1 AND po.heard_at <= $2
-    AND (po.heard_at < $4 OR po.heard_at >= $5)
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY po.iata, po.observer_id
+  WHERE a.hour >= $2 AND a.hour < $3
+    AND ($1::text = '' OR a.iata = ANY(string_to_array($1::text, ',')))
 ), combined AS (
   SELECT observer_id, MIN(iata)::text AS iata, SUM(observation_count)::bigint AS observation_count
   FROM source GROUP BY observer_id
@@ -366,7 +323,7 @@ WITH source AS (
 SELECT o.id, o.display_name, o.observer_type, c.iata, c.observation_count
 FROM combined c JOIN observers o ON o.id = c.observer_id
 ORDER BY c.observation_count DESC
-LIMIT $6`, since, until, iatas, bounds.fullStart, bounds.fullEnd, limit)
+LIMIT $4`, iatas, bounds.fullStart, bounds.fullEnd, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -388,19 +345,12 @@ func (s *Store) getAtlasActiveNodesByIATAAggregated(ctx context.Context, since, 
 WITH active AS (
   SELECT a.iata, a.origin_pubkey
   FROM atlas_hourly_node_aggregates a
-  WHERE a.hour >= $3 AND a.hour < $4
+  WHERE a.hour >= $1 AND a.hour < $2
   GROUP BY a.iata, a.origin_pubkey
-  UNION
-  SELECT po.iata, p.origin_pubkey
-  FROM packet_observations po JOIN packets p ON p.packet_hash = po.packet_hash
-  WHERE po.heard_at >= $1 AND po.heard_at <= $2
-    AND (po.heard_at < $3 OR po.heard_at >= $4)
-    AND p.origin_pubkey IS NOT NULL
-  GROUP BY po.iata, p.origin_pubkey
 )
 SELECT active.iata, COUNT(*)::bigint
 FROM active JOIN nodes n ON n.public_key = active.origin_pubkey
-GROUP BY active.iata`, since, until, bounds.fullStart, bounds.fullEnd)
+GROUP BY active.iata`, bounds.fullStart, bounds.fullEnd)
 	if err != nil {
 		return nil, err
 	}

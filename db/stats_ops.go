@@ -2027,36 +2027,13 @@ func (s *Store) GetStatsObserverHealth(ctx context.Context, filter api.StatsObse
   GROUP BY po.observer_id
 )`
 	if s.atlasAggregatesAvailable(ctx, filter.Since, filter.Until, false) {
-		windowCountsCTE = `aggregate_counts AS (
+		windowCountsCTE = `window_counts AS (
   SELECT a.observer_id, SUM(a.observation_count)::bigint AS observation_count
   FROM atlas_hourly_observer_aggregates a
   WHERE a.hour >= date_trunc('hour', $1::timestamptz)
-          + CASE WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN interval '0' ELSE interval '1 hour' END
-    AND a.hour < date_trunc('hour', $2::timestamptz)
+    AND a.hour < date_trunc('hour', $2::timestamptz) + interval '1 hour'
     AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
   GROUP BY a.observer_id
-),
-raw_counts AS (
-  SELECT po.observer_id, COUNT(*)::bigint AS observation_count
-  FROM packet_observations po
-  WHERE po.heard_at >= $1
-    AND po.heard_at <= $2
-    AND (
-      po.heard_at < date_trunc('hour', $1::timestamptz)
-          + CASE WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN interval '0' ELSE interval '1 hour' END
-      OR po.heard_at >= date_trunc('hour', $2::timestamptz)
-    )
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY po.observer_id
-),
-window_counts AS (
-  SELECT observer_id, SUM(observation_count)::bigint AS observation_count
-  FROM (
-    SELECT * FROM aggregate_counts
-    UNION ALL
-    SELECT * FROM raw_counts
-  ) combined
-  GROUP BY observer_id
 )`
 	}
 
