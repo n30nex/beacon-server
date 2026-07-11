@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Beacon scratch restore drill on the first day of each month
+
+[Timer]
+OnCalendar=*-*-01 04:30:00
+Persistent=true
+Unit=beacon-restore-drill.service
+
+[Install]
+WantedBy=timers.target

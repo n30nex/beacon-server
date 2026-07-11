@@ -1,0 +1,15 @@
+[Unit]
+Description=Beacon monthly PostgreSQL scratch restore drill
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/beacon/scripts/restore-drill.sh
+TimeoutStartSec=6h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/beacon /var/lib/beacon /run/lock

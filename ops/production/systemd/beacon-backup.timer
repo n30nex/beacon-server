@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Beacon PostgreSQL backup daily at 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=beacon-backup.service
+
+[Install]
+WantedBy=timers.target

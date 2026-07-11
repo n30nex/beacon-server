@@ -1,0 +1,140 @@
+name: beacon-production
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16@sha256:081f1bc7bd5e143dbb6e487b710bbc27712cdcfaced4c071b8e47349aa1b4171
+    restart: unless-stopped
+    mem_limit: 448m
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: beacon
+      POSTGRES_DB: beacon
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - compute_query_id=auto
+      - -c
+      - shared_buffers=96MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=30
+    volumes:
+      - beacon-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+    networks: [backend]
+
+  redis:
+    image: docker.io/library/redis@sha256:0a972391db0b24ec336e35d1bc98b237237e26f82bf5120cf2f6b1688d1df973
+    restart: unless-stopped
+    mem_limit: 64m
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - beacon-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks: [backend]
+
+  api:
+    image: ${BEACON_API_IMAGE:?BEACON_API_IMAGE must be an immutable digest reference}
+    restart: unless-stopped
+    init: true
+    user: "65532:65532"
+    read_only: true
+    mem_limit: 320m
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - ${BEACON_SECRET_ENV_FILE:-/etc/beacon/beacon.env}
+    environment:
+      LISTEN_ADDR: :8080
+      CONFIG_PATH: /etc/beacon/config.yaml
+      REDIS_ADDR: redis:6379
+      BEACON_BACKUP_DIR: /var/backups/beacon
+    volumes:
+      - ${BEACON_CONFIG_FILE:-/etc/beacon/config.yaml}:/etc/beacon/config.yaml:ro
+      - ${BEACON_BACKUP_DIR:-/var/backups/beacon}:/var/backups/beacon:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 45s
+    networks: [backend]
+
+  web:
+    image: ${BEACON_WEB_IMAGE:?BEACON_WEB_IMAGE must be an immutable digest reference}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    mem_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:8080"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m,mode=1777
+      - /data:rw,nosuid,size=8m,mode=0750
+      - /config:rw,nosuid,size=4m,mode=0750
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, backend]
+
+networks:
+  edge: {}
+  backend:
+    internal: true
+
+volumes:
+  beacon-postgres-data:
+    name: beacon-postgres-data
+  beacon-redis-data:
+    name: beacon-redis-data
+
+secrets:
+  postgres_password:
+    file: ${BEACON_POSTGRES_PASSWORD_FILE:-/etc/beacon/postgres-password}

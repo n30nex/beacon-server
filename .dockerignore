@@ -1,0 +1,32 @@
+.git
+.github
+.idea
+.vscode
+.build
+binaries
+coverage*
+*.exe
+*.log
+*.dump
+*.bak
+*.tmp
+
+# Runtime configuration and credentials are installed on the host, never baked
+# into an image or uploaded as Docker build context.
+.env
+.env.*
+!.env.example
+config.yaml
+config.*.yaml
+!config.yaml.example
+docker-compose.yml
+notes.md
+roadmap.md
+
+# Local and remote data/backup locations.
+.local-backups
+.remote-backups
+.local-runtime
+postgres-data
+redis-data
+node_modules

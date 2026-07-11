@@ -43,7 +43,13 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
 
+      - name: Record immutable build provenance
+        id: provenance
+        shell: bash
+        run: echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -51,3 +57,33 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.provenance.outputs.build_time }}
+            BUILD_DIRTY=false
+
+      - name: Scan published image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Record immutable image reference
+        if: success()
+        shell: bash
+        run: |
+          ref="${REGISTRY}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
+          printf '%s\n' "$ref" | tee beacon-server-image.txt
+          printf '### Beacon server image\n\n`%s`\n' "$ref" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable image reference
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: beacon-server-image-${{ github.sha }}
+          path: beacon-server-image.txt
+          if-no-files-found: error

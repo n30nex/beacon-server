@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Beacon readiness every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=beacon-watchdog.service
+
+[Install]
+WantedBy=timers.target
