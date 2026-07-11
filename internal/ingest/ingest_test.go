@@ -7,11 +7,42 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/google/uuid"
 	"github.com/meshcore-go/meshcore-go"
 )
+
+func TestParseEnvelopeTimestamp(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "UTC designator", value: "2026-07-11T23:31:39.661465Z", want: "2026-07-11T23:31:39.661465Z"},
+		{name: "numeric offset", value: "2026-07-11T19:31:39.661465-04:00", want: "2026-07-11T23:31:39.661465Z"},
+		{name: "naive microseconds", value: "2026-07-11T23:31:39.661465", want: "2026-07-11T23:31:39.661465Z"},
+		{name: "naive seconds", value: "2026-07-11T23:31:39", want: "2026-07-11T23:31:39Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseEnvelopeTimestamp(tt.value)
+			if err != nil {
+				t.Fatalf("parseEnvelopeTimestamp() error = %v", err)
+			}
+			if got.UTC().Format(time.RFC3339Nano) != tt.want {
+				t.Fatalf("parseEnvelopeTimestamp() = %s, want %s", got.UTC().Format(time.RFC3339Nano), tt.want)
+			}
+		})
+	}
+}
+
+func TestParseEnvelopeTimestampRejectsInvalidValue(t *testing.T) {
+	if _, err := parseEnvelopeTimestamp("not-a-timestamp"); err == nil {
+		t.Fatal("parseEnvelopeTimestamp() accepted an invalid timestamp")
+	}
+}
 
 func TestParseNumber_Float(t *testing.T) {
 	raw := json.RawMessage(`3.14`)
