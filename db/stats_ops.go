@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -2017,8 +2018,49 @@ func (s *Store) GetStatsObserverHealth(ctx context.Context, filter api.StatsObse
 		ServerTime: time.Now().UnixMilli(),
 		Window:     statsWindow(filter.StatsFilter),
 	}
+	windowCountsCTE := `window_counts AS (
+  SELECT po.observer_id, COUNT(*)::bigint AS observation_count
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.observer_id
+)`
+	if s.atlasAggregatesAvailable(ctx, filter.Since, filter.Until, false) {
+		windowCountsCTE = `aggregate_counts AS (
+  SELECT a.observer_id, SUM(a.observation_count)::bigint AS observation_count
+  FROM atlas_hourly_observer_aggregates a
+  WHERE a.hour >= date_trunc('hour', $1::timestamptz)
+          + CASE WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN interval '0' ELSE interval '1 hour' END
+    AND a.hour < date_trunc('hour', $2::timestamptz)
+    AND ($3::text = '' OR a.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY a.observer_id
+),
+raw_counts AS (
+  SELECT po.observer_id, COUNT(*)::bigint AS observation_count
+  FROM packet_observations po
+  WHERE po.heard_at >= $1
+    AND po.heard_at <= $2
+    AND (
+      po.heard_at < date_trunc('hour', $1::timestamptz)
+          + CASE WHEN $1::timestamptz = date_trunc('hour', $1::timestamptz) THEN interval '0' ELSE interval '1 hour' END
+      OR po.heard_at >= date_trunc('hour', $2::timestamptz)
+    )
+    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
+  GROUP BY po.observer_id
+),
+window_counts AS (
+  SELECT observer_id, SUM(observation_count)::bigint AS observation_count
+  FROM (
+    SELECT * FROM aggregate_counts
+    UNION ALL
+    SELECT * FROM raw_counts
+  ) combined
+  GROUP BY observer_id
+)`
+	}
 
-	rows, err := s.pool.Query(ctx, `
+	query := fmt.Sprintf(`
 WITH latest_iata AS (
   SELECT DISTINCT ON (oi.observer_id)
     oi.observer_id,
@@ -2028,14 +2070,7 @@ WITH latest_iata AS (
   WHERE ($3::text = '' OR oi.iata = ANY(string_to_array($3::text, ',')))
   ORDER BY oi.observer_id, oi.last_heard DESC
 ),
-window_counts AS (
-  SELECT po.observer_id, COUNT(*)::bigint AS observation_count
-  FROM packet_observations po
-  WHERE po.heard_at >= $1
-    AND po.heard_at <= $2
-    AND ($3::text = '' OR po.iata = ANY(string_to_array($3::text, ',')))
-  GROUP BY po.observer_id
-),
+%s,
 latest_tel AS (
   SELECT DISTINCT ON (ot.observer_id)
     ot.observer_id,
@@ -2070,7 +2105,8 @@ LEFT JOIN window_counts wc ON wc.observer_id = o.id
 LEFT JOIN latest_tel lt ON lt.observer_id = o.id
 WHERE ($3::text = '' OR li.iata IS NOT NULL)
 ORDER BY COALESCE(wc.observation_count, 0) DESC, COALESCE(li.heard_at, o.last_status_at, o.last_seen) DESC
-LIMIT $5`, filter.Since, filter.Until, iataFilter, staleCutoff, filter.Limit)
+LIMIT $5`, windowCountsCTE)
+	rows, err := s.pool.Query(ctx, query, filter.Since, filter.Until, iataFilter, staleCutoff, filter.Limit)
 	if err != nil {
 		return nil, err
 	}

@@ -30,6 +30,10 @@ type Config struct {
 
 // BackgroundConfig controls the intervals for background maintenance tasks.
 type BackgroundConfig struct {
+	// AtlasAggregate incrementally refreshes the current/prior hour and
+	// backfills the seven-day canonical briefing window. Defaults to 5m.
+	AtlasAggregate duration `yaml:"atlas_aggregate"`
+
 	// ViewRefresh is how often materialized views are refreshed.
 	// Defaults to 1h if not set.
 	ViewRefresh duration `yaml:"view_refresh"`
@@ -43,14 +47,16 @@ type BackgroundConfig struct {
 
 	// Offsets stagger the first run after startup while retaining the existing
 	// interval fields above for backward compatibility.
-	ViewRefreshOffset duration `yaml:"view_refresh_offset"`
-	ReconfirmOffset   duration `yaml:"reconfirm_offset"`
-	CleanupOffset     duration `yaml:"cleanup_offset"`
+	ViewRefreshOffset    duration `yaml:"view_refresh_offset"`
+	AtlasAggregateOffset duration `yaml:"atlas_aggregate_offset"`
+	ReconfirmOffset      duration `yaml:"reconfirm_offset"`
+	CleanupOffset        duration `yaml:"cleanup_offset"`
 
 	// Timeouts bound each maintenance operation independently.
-	ViewRefreshTimeout duration `yaml:"view_refresh_timeout"`
-	ReconfirmTimeout   duration `yaml:"reconfirm_timeout"`
-	CleanupTimeout     duration `yaml:"cleanup_timeout"`
+	ViewRefreshTimeout    duration `yaml:"view_refresh_timeout"`
+	AtlasAggregateTimeout duration `yaml:"atlas_aggregate_timeout"`
+	ReconfirmTimeout      duration `yaml:"reconfirm_timeout"`
+	CleanupTimeout        duration `yaml:"cleanup_timeout"`
 }
 
 // CORSConfig controls Cross-Origin Resource Sharing behaviour.

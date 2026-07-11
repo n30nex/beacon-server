@@ -81,6 +81,13 @@ func NewRequestMetrics() *RequestMetrics {
 // pattern. Unknown routes are grouped under a fixed label.
 func (m *RequestMetrics) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A WebSocket handler returns when the connection closes, so measuring it
+		// here would report session lifetime as HTTP request latency. Reconnect and
+		// gap-heal health are exposed separately by the WebSocket diagnostics.
+		if r.URL.Path == "/ws" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		started := m.now()
 		wrapped := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(wrapped, r)

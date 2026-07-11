@@ -13,6 +13,20 @@ import (
 	"github.com/MeshCore-Beacon/beacon-server/db"
 )
 
+// AtlasAggregateTask maintains hourly aggregate tables in bounded, atomic
+// hour batches. It is scheduled independently but runs on the same serialized
+// worker as all other maintenance.
+func AtlasAggregateTask(store *db.Store, interval time.Duration) Task {
+	return Task{
+		Name:     "atlas_aggregate_refresh",
+		Interval: interval,
+		Run: func(ctx context.Context) (TaskResult, error) {
+			rows, err := store.RefreshAtlasHourlyAggregates(ctx, time.Now())
+			return TaskResult{AffectedRows: rows}, err
+		},
+	}
+}
+
 // ViewRefreshTask returns a Task that refreshes all materialized views.
 func ViewRefreshTask(store *db.Store, interval time.Duration) Task {
 	return Task{

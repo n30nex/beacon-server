@@ -1408,7 +1408,7 @@ func measureHotPathTimings(ctx context.Context, store *Store, fx hotPathFixture)
 		{
 			name: "getAtlasBriefingRegions_preloaded",
 			run: func(ctx context.Context) error {
-				_, err := store.getAtlasBriefingRegions(ctx, fx.Since, fx.Until, currentIATAs, previousIATAs)
+				_, err := store.getAtlasBriefingRegions(ctx, fx.Since, fx.Until, currentIATAs, previousIATAs, false)
 				return err
 			},
 		},

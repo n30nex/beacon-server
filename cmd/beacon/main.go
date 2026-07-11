@@ -121,6 +121,10 @@ func main() {
 	if viewRefreshInterval == 0 {
 		viewRefreshInterval = time.Hour
 	}
+	atlasAggregateInterval := cfg.Background.AtlasAggregate.Duration
+	if atlasAggregateInterval == 0 {
+		atlasAggregateInterval = 5 * time.Minute
+	}
 	reconfirmInterval := cfg.Background.Reconfirm.Duration
 	if reconfirmInterval == 0 {
 		reconfirmInterval = time.Hour
@@ -130,8 +134,8 @@ func main() {
 		cleanupInterval = time.Hour
 	}
 
-	log.Printf("config: loaded — telemetryResolution=%s telemetryRetention=%s packetRetention=%s maxConnsPerIP=%d viewRefresh=%s reconfirm=%s cleanup=%s",
-		telemetryResolution, telemetryRetention, packetRetention, maxConnsPerIP, viewRefreshInterval, reconfirmInterval, cleanupInterval)
+	log.Printf("config: loaded — telemetryResolution=%s telemetryRetention=%s packetRetention=%s maxConnsPerIP=%d atlasAggregate=%s viewRefresh=%s reconfirm=%s cleanup=%s",
+		telemetryResolution, telemetryRetention, packetRetention, maxConnsPerIP, atlasAggregateInterval, viewRefreshInterval, reconfirmInterval, cleanupInterval)
 
 	// ── Hub ──────────────────────────────────────────────────────────────────
 	h := hub.New()
@@ -314,6 +318,9 @@ func main() {
 	go broker1.Start(ctx)
 	go broker2.Start(ctx)
 
+	atlasAggregateTask := background.AtlasAggregateTask(backgroundStore, atlasAggregateInterval)
+	atlasAggregateTask.Offset = durationOrDefault(cfg.Background.AtlasAggregateOffset.Duration, 30*time.Second)
+	atlasAggregateTask.Timeout = durationOrDefault(cfg.Background.AtlasAggregateTimeout.Duration, 10*time.Minute)
 	viewRefreshTask := background.ViewRefreshTask(backgroundStore, viewRefreshInterval)
 	viewRefreshTask.Offset = durationOrDefault(cfg.Background.ViewRefreshOffset.Duration, 5*time.Minute)
 	viewRefreshTask.Timeout = durationOrDefault(cfg.Background.ViewRefreshTimeout.Duration, 10*time.Minute)
@@ -323,7 +330,7 @@ func main() {
 	cleanupTask := background.CleanupTask(backgroundStore, telemetryRetention, packetRetention, cleanupInterval)
 	cleanupTask.Offset = durationOrDefault(cfg.Background.CleanupOffset.Duration, 45*time.Minute)
 	cleanupTask.Timeout = durationOrDefault(cfg.Background.CleanupTimeout.Duration, 15*time.Minute)
-	scheduler := background.New([]background.Task{viewRefreshTask, reconfirmTask, cleanupTask})
+	scheduler := background.New([]background.Task{atlasAggregateTask, viewRefreshTask, reconfirmTask, cleanupTask})
 	go scheduler.Start(ctx)
 
 	// ── HTTP server ──────────────────────────────────────────────────────────

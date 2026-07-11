@@ -117,6 +117,7 @@ func (s *Store) GetRegionAtlasSummary(ctx context.Context, slug string, since, u
 
 func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, until time.Time) (*api.AtlasBriefing, error) {
 	since, until = atlasWindow(since, until)
+	useAggregates := s.atlasAggregatesAvailable(ctx, since, until, true)
 	if regionSlug == "" {
 		regionSlug = "all"
 	}
@@ -141,6 +142,24 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 			name: "atlas current/previous iata rollups",
 			run: func(ctx context.Context) error {
 				var err error
+				if useAggregates {
+					window := until.Sub(since)
+					if err = runStoreParallelTasks(ctx,
+						storeParallelTask{name: "current aggregate", run: func(ctx context.Context) error {
+							rows, aggregateErr := s.getAtlasIATAsAggregated(ctx, since, until, "")
+							allIATARows = rows
+							return aggregateErr
+						}},
+						storeParallelTask{name: "previous aggregate", run: func(ctx context.Context) error {
+							rows, aggregateErr := s.getAtlasIATAsAggregated(ctx, since.Add(-window), since, "")
+							previousIATARows = rows
+							return aggregateErr
+						}},
+					); err != nil {
+						return err
+					}
+					return nil
+				}
 				allIATARows, previousIATARows, err = s.getAtlasCurrentAndPreviousIATAs(ctx, since, until, "")
 				return err
 			},
@@ -149,7 +168,11 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 			name: "atlas payload and route mix",
 			run: func(ctx context.Context) error {
 				var err error
-				payload, routeMix, err = s.getAtlasPayloadAndRouteMix(ctx, since, until, iataFilter)
+				if useAggregates {
+					payload, routeMix, err = s.getAtlasPayloadAndRouteMixAggregated(ctx, since, until, iataFilter)
+				} else {
+					payload, routeMix, err = s.getAtlasPayloadAndRouteMix(ctx, since, until, iataFilter)
+				}
 				return err
 			},
 		},
@@ -157,7 +180,11 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 			name: "atlas top nodes",
 			run: func(ctx context.Context) error {
 				var err error
-				topNodes, err = s.getAtlasTopNodes(ctx, since, until, iataFilter, 8)
+				if useAggregates {
+					topNodes, err = s.getAtlasTopNodesAggregated(ctx, since, until, iataFilter, 8)
+				} else {
+					topNodes, err = s.getAtlasTopNodes(ctx, since, until, iataFilter, 8)
+				}
 				return err
 			},
 		},
@@ -165,7 +192,11 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 			name: "atlas top observers",
 			run: func(ctx context.Context) error {
 				var err error
-				topObservers, err = s.getAtlasTopObservers(ctx, since, until, iataFilter, 8)
+				if useAggregates {
+					topObservers, err = s.getAtlasTopObserversAggregated(ctx, since, until, iataFilter, 8)
+				} else {
+					topObservers, err = s.getAtlasTopObservers(ctx, since, until, iataFilter, 8)
+				}
 				return err
 			},
 		},
@@ -216,7 +247,7 @@ func (s *Store) GetAtlasBriefing(ctx context.Context, regionSlug string, since, 
 		TopObservers: topObservers,
 		Scopes:       scopes,
 	}
-	regions, err := s.getAtlasBriefingRegions(ctx, since, until, allIATARows, previousIATARows)
+	regions, err := s.getAtlasBriefingRegions(ctx, since, until, allIATARows, previousIATARows, useAggregates)
 	if err != nil {
 		return nil, err
 	}
@@ -275,10 +306,16 @@ func runStoreParallelTasks(ctx context.Context, tasks ...storeParallelTask) erro
 	return firstErr
 }
 
-func (s *Store) getAtlasBriefingRegions(ctx context.Context, since, until time.Time, currentRows, previousRows []api.AtlasIATA) ([]api.AtlasBriefingRegion, error) {
+func (s *Store) getAtlasBriefingRegions(ctx context.Context, since, until time.Time, currentRows, previousRows []api.AtlasIATA, useAggregates bool) ([]api.AtlasBriefingRegion, error) {
 	slugs := []string{"all", "western-canada", "eastern-canada"}
 	rows := make([]api.AtlasBriefingRegion, 0, len(slugs))
-	activeNodesByIATA, err := s.getAtlasActiveNodesByIATA(ctx, since, until)
+	var activeNodesByIATA map[string]int64
+	var err error
+	if useAggregates {
+		activeNodesByIATA, err = s.getAtlasActiveNodesByIATAAggregated(ctx, since, until)
+	} else {
+		activeNodesByIATA, err = s.getAtlasActiveNodesByIATA(ctx, since, until)
+	}
 	if err != nil {
 		return nil, err
 	}

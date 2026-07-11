@@ -47,6 +47,18 @@ func TestRequestMetricsKeepsServiceLevelSeparateFromReadiness(t *testing.T) {
 	}
 }
 
+func TestRequestMetricsExcludesWebSocketSessionLifetime(t *testing.T) {
+	metrics := NewRequestMetrics()
+	r := chi.NewRouter()
+	r.Use(metrics.Handler)
+	r.Get("/ws", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusSwitchingProtocols) })
+
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ws", nil))
+	if snapshot := metrics.Snapshot(); len(snapshot.Routes) != 0 {
+		t.Fatalf("websocket session leaked into request latency metrics: %#v", snapshot.Routes)
+	}
+}
+
 func TestRequestMetricsBoundsRouteCardinality(t *testing.T) {
 	metrics := NewRequestMetrics()
 	now := time.Now()
