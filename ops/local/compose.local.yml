@@ -1,0 +1,51 @@
+name: beacon-local
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16@sha256:081f1bc7bd5e143dbb6e487b710bbc27712cdcfaced4c071b8e47349aa1b4171
+    container_name: beacon-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${BEACON_POSTGRES_USER:-beacon}
+      POSTGRES_PASSWORD: ${BEACON_POSTGRES_PASSWORD:-beacon}
+      POSTGRES_DB: ${BEACON_POSTGRES_DB:-beacon}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - compute_query_id=auto
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - beacon-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: docker.io/library/redis@sha256:0a972391db0b24ec336e35d1bc98b237237e26f82bf5120cf2f6b1688d1df973
+    container_name: beacon-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - beacon-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  beacon-postgres-data:
+    name: beacon-postgres-data
+  beacon-redis-data:
+    name: beacon-redis-data
