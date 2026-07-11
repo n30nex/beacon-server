@@ -280,6 +280,7 @@ func main() {
 	broker1 := ingest.New(
 		ingest.Config{
 			BrokerName:          "mqtt1",
+			ClientID:            getEnvDefault("MQTT_BROKER_1_CLIENT_ID", "beacon-mqtt1"),
 			URL:                 getEnv("MQTT_BROKER_1_URL"),
 			Username:            getEnv("MQTT_BROKER_1_USERNAME"),
 			Password:            getEnv("MQTT_BROKER_1_PASSWORD"),
@@ -295,6 +296,7 @@ func main() {
 	broker2 := ingest.New(
 		ingest.Config{
 			BrokerName:          "mqtt2",
+			ClientID:            getEnvDefault("MQTT_BROKER_2_CLIENT_ID", "beacon-mqtt2"),
 			URL:                 getEnv("MQTT_BROKER_2_URL"),
 			Username:            getEnv("MQTT_BROKER_2_USERNAME"),
 			Password:            getEnv("MQTT_BROKER_2_PASSWORD"),

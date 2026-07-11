@@ -16,7 +16,7 @@ acquire_production_lock 30
 validate_image_state "$CURRENT_IMAGES"; validate_image_state "$PREVIOUS_IMAGES"
 original_current="$(mktemp "${STATE_DIR}/.rollback-current.XXXXXX")"
 original_previous="$(mktemp "${STATE_DIR}/.rollback-previous.XXXXXX")"
-# shellcheck disable=SC2329 # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() { rm -f "$original_current" "$original_previous"; }
 trap cleanup EXIT
 install -m 0600 -o root -g root "$CURRENT_IMAGES" "$original_current"

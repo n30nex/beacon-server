@@ -31,6 +31,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -47,6 +48,9 @@ type Config struct {
 	// BrokerName is a short human-readable label ("mqtt1", "mqtt2") used in
 	// log messages and stored in packet_observations.source_broker.
 	BrokerName string
+	// ClientID must be unique to this Beacon deployment. When empty it retains
+	// the legacy beacon-<broker> value for backward compatibility.
+	ClientID string
 
 	// URL is the full broker WebSocket URL, e.g. "wss://mqtt1.meshcore.ca/mqtt"
 	URL string
@@ -180,6 +184,7 @@ type Worker struct {
 	keys             ChannelKeyStore
 	scopes           ScopeStore
 	client           mqtt.Client
+	subscribed       atomic.Bool
 	onNodeUpsert     func(ctx context.Context, nodeID uuid.UUID)
 	onObserverUpsert func(ctx context.Context, observerID uuid.UUID)
 	onShortIDChange  func(iata string)
@@ -196,9 +201,10 @@ func New(cfg Config, db DB, h *hub.Hub, keys ChannelKeyStore, scopes ScopeStore)
 //
 // Intended usage: go worker.Start(ctx)
 func (w *Worker) Start(ctx context.Context) {
+	w.subscribed.Store(false)
 	opts := mqtt.NewClientOptions().
 		AddBroker(w.cfg.URL).
-		SetClientID(fmt.Sprintf("beacon-%s", w.cfg.BrokerName)).
+		SetClientID(resolveClientID(w.cfg)).
 		SetUsername(w.cfg.Username).
 		SetPassword(w.cfg.Password).
 		SetAutoReconnect(true).
@@ -210,11 +216,21 @@ func (w *Worker) Start(ctx context.Context) {
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
 		SetOnConnectHandler(func(c mqtt.Client) {
+			w.subscribed.Store(false)
 			log.Printf("ingest[%s]: connected to %s", w.cfg.BrokerName, w.cfg.URL)
 			w.subscribe(c)
 		}).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			w.subscribed.Store(false)
 			log.Printf("ingest[%s]: connection lost, will reconnect: %v", w.cfg.BrokerName, err)
+		}).
+		SetConnectionNotificationHandler(func(_ mqtt.Client, notification mqtt.ConnectionNotification) {
+			switch event := notification.(type) {
+			case mqtt.ConnectionNotificationBrokerFailed:
+				log.Printf("ingest[%s]: broker connection attempt failed: %v", w.cfg.BrokerName, event.Reason)
+			case mqtt.ConnectionNotificationFailed:
+				log.Printf("ingest[%s]: connection attempt failed: %v", w.cfg.BrokerName, event.Reason)
+			}
 		})
 
 	w.client = mqtt.NewClient(opts)
@@ -224,6 +240,7 @@ func (w *Worker) Start(ctx context.Context) {
 	}
 
 	<-ctx.Done()
+	w.subscribed.Store(false)
 	w.client.Disconnect(500)
 	log.Printf("ingest[%s]: stopped", w.cfg.BrokerName)
 }
@@ -236,7 +253,14 @@ func (w *Worker) IsConnected() bool {
 	if w.client == nil {
 		return false
 	}
-	return w.client.IsConnected()
+	return w.client.IsConnectionOpen() && w.subscribed.Load()
+}
+
+func resolveClientID(cfg Config) string {
+	if clientID := strings.TrimSpace(cfg.ClientID); clientID != "" {
+		return clientID
+	}
+	return fmt.Sprintf("beacon-%s", cfg.BrokerName)
 }
 
 func (w *Worker) SetCacheInvalidators(onNode, onObserver func(ctx context.Context, id uuid.UUID)) {
@@ -256,9 +280,16 @@ func (w *Worker) subscribe(client mqtt.Client) {
 	tok := client.Subscribe("meshcore/#", 1, func(_ mqtt.Client, msg mqtt.Message) {
 		w.handleMessage(msg)
 	})
-	if tok.Wait() && tok.Error() != nil {
-		log.Printf("ingest[%s]: subscribe error: %v", w.cfg.BrokerName, tok.Error())
+	if !tok.WaitTimeout(15 * time.Second) {
+		log.Printf("ingest[%s]: subscribe timeout", w.cfg.BrokerName)
+		return
 	}
+	if tok.Error() != nil {
+		log.Printf("ingest[%s]: subscribe error: %v", w.cfg.BrokerName, tok.Error())
+		return
+	}
+	w.subscribed.Store(true)
+	log.Printf("ingest[%s]: subscribed to meshcore/#", w.cfg.BrokerName)
 }
 
 // handleMessage dispatches incoming MQTT messages by subtopic.
