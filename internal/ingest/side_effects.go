@@ -72,16 +72,11 @@ func (w *Worker) handlePayloadTypeSideEffects(ctx context.Context, packet *meshc
 			log.Printf("ingest[%s]: error decoding advert payload: %v", w.cfg.BrokerName, err)
 			return
 		}
-		var lat, lon *float64
-		if advert.AppData().Lat != 0 || advert.AppData().Lon != 0 {
-			la := float64(advert.AppData().Lat) / 1e6
-			lo := float64(advert.AppData().Lon) / 1e6
-			lat = &la
-			lon = &lo
-		}
+		appData := advert.AppData()
+		lat, lon := advertLocationCoordinates(appData, advert.Flags())
 		params := UpsertNodeParams{
 			PublicKey: advert.PublicKey.PublicKeyBytes(),
-			Name:      strings.ToValidUTF8(advert.AppData().Name, "\uFFFD"),
+			Name:      strings.ToValidUTF8(appData.Name, "\uFFFD"),
 			NodeType:  advert.Type(),
 			Latitude:  lat,
 			Longitude: lon,
@@ -140,7 +135,7 @@ func (w *Worker) handlePayloadTypeSideEffects(ctx context.Context, packet *meshc
 		evt := nodeUpdateEvent{
 			NodeID:       nodeID.String(),
 			PublicKey:    pubkeyHex,
-			Name:         advert.AppData().Name,
+			Name:         appData.Name,
 			NodeType:     advert.Type(),
 			NodeTypeName: api.NodeTypeName(int16(advert.Type())),
 			IATA:         iata,

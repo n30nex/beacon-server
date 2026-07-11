@@ -10,6 +10,7 @@ import (
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/google/uuid"
+	"github.com/meshcore-go/meshcore-go"
 )
 
 func TestParseNumber_Float(t *testing.T) {
@@ -125,6 +126,39 @@ func TestUint32ToBytes_RoundTrip(t *testing.T) {
 	got := binary.LittleEndian.Uint32(b)
 	if got != v {
 		t.Errorf("round trip failed: expected %x, got %x", v, got)
+	}
+}
+
+func TestAdvertLocationCoordinates_RequiresLocationFlag(t *testing.T) {
+	lat, lng := advertLocationCoordinates(meshcore.AdvertAppData{
+		Lat: 1188916984,
+		Lon: -122239380,
+	}, meshcore.AdvertTypeRepeater)
+	if lat != nil || lng != nil {
+		t.Fatalf("expected no coordinates without AdvertLatLonMask, got %v %v", lat, lng)
+	}
+}
+
+func TestAdvertLocationCoordinates_DropsOutOfRangeValues(t *testing.T) {
+	lat, lng := advertLocationCoordinates(meshcore.AdvertAppData{
+		Lat: 1188916984,
+		Lon: -122239380,
+	}, meshcore.AdvertTypeRepeater|meshcore.AdvertLatLonMask)
+	if lat != nil || lng != nil {
+		t.Fatalf("expected out-of-range coordinates to be dropped, got %v %v", lat, lng)
+	}
+}
+
+func TestAdvertLocationCoordinates_DecodesValidLocation(t *testing.T) {
+	lat, lng := advertLocationCoordinates(meshcore.AdvertAppData{
+		Lat: 49420000,
+		Lon: -123120000,
+	}, meshcore.AdvertTypeRepeater|meshcore.AdvertLatLonMask)
+	if lat == nil || lng == nil {
+		t.Fatal("expected valid coordinates")
+	}
+	if *lat != 49.42 || *lng != -123.12 {
+		t.Fatalf("unexpected coordinates: %f %f", *lat, *lng)
 	}
 }
 

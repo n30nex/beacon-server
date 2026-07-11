@@ -344,13 +344,7 @@ func (w *Worker) handlePacket(ctx context.Context, iata, pubkeyHex string, raw [
 			hasFeature2 := flags&0x40 != 0
 			hasName := flags&0x80 != 0
 
-			var lat, lon *float64
-			if hasLocation {
-				la := float64(appData.Lat) / 1e6
-				lo := float64(appData.Lon) / 1e6
-				lat = &la
-				lon = &lo
-			}
+			lat, lon := advertLocationCoordinates(appData, flags)
 
 			var feat1, feat2 *uint16
 			if hasFeature1 {
