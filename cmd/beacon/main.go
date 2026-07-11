@@ -158,6 +158,9 @@ func main() {
 		log.Fatalf("failed to connect to postgres at %s: %v", os.Getenv("POSTGRES_DSN_HOST"), err)
 	}
 	defer pool.Close()
+	if err := waitForPostgres(ctx, pool.Ping, 60*time.Second, time.Second); err != nil {
+		log.Fatalf("postgres did not become ready: %v", err)
+	}
 
 	backgroundPoolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -424,6 +427,33 @@ func durationOrDefault(value, fallback time.Duration) time.Duration {
 		return value
 	}
 	return fallback
+}
+
+func waitForPostgres(
+	ctx context.Context,
+	ping func(context.Context) error,
+	timeout time.Duration,
+	retryInterval time.Duration,
+) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var lastErr error
+	for {
+		if err := ping(waitCtx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("timed out after %s: %w", timeout, lastErr)
+		case <-timer.C:
+		}
+	}
 }
 
 func parseBuildDirty(value string) bool {
