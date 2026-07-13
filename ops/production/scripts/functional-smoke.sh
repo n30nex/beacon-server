@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 origin="${BEACON_SMOKE_ORIGIN:-http://127.0.0.1}"
-max_time="${BEACON_SMOKE_MAX_TIME_SECONDS:-8}"
+# A cold normalized analytics window may need to populate the shared cache on
+# the 1 vCPU production database. Subsequent requests are served from cache.
+max_time="${BEACON_SMOKE_MAX_TIME_SECONDS:-25}"
 
 checks=(
   "home|/api/v1/stats/home?range=24h"

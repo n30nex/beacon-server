@@ -30,7 +30,14 @@ func RequestDeadline(next http.Handler) http.Handler {
 			deadline = 2 * time.Second
 		case strings.HasPrefix(r.URL.Path, "/api/v1/live"):
 			deadline = 2 * time.Second
-		case strings.HasPrefix(r.URL.Path, "/api/v1/atlas"), strings.HasPrefix(r.URL.Path, "/api/v1/stats"):
+		case strings.HasPrefix(r.URL.Path, "/api/v1/stats"):
+			// The first request for a normalized analytics window warms the
+			// shared cache. On the production 1 vCPU database, the composite
+			// queries can legitimately exceed the ordinary edge deadline while
+			// still completing successfully; stampede protection keeps this
+			// extended budget to one heavyweight refresh at a time.
+			deadline = 20 * time.Second
+		case strings.HasPrefix(r.URL.Path, "/api/v1/atlas"):
 			deadline = 5 * time.Second
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), deadline)
