@@ -103,6 +103,11 @@ if ! wait_for_url http://127.0.0.1/readyz 60 2; then
   if [[ "$was_active" == true ]]; then restore_active_deployment || true; fi
   exit 1
 fi
+if ! bash "${SCRIPT_DIR}/functional-smoke.sh"; then
+  log "Candidate failed the functional route smoke test"
+  if [[ "$was_active" == true ]]; then restore_active_deployment || true; fi
+  exit 1
+fi
 printf 'activated_at=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" > "${STATE_DIR}/.enabled.tmp"
 mv -f "${STATE_DIR}/.enabled.tmp" "$ACTIVE_MARKER"
 chmod 0600 "$ACTIVE_MARKER"

@@ -3,6 +3,13 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=ops/production/scripts/common.sh
 source "${SCRIPT_DIR}/common.sh"
+strict=false
+while (($#)); do
+  case "$1" in
+    --strict) strict=true; shift ;;
+    *) echo "usage: $0 [--strict]" >&2; exit 2 ;;
+  esac
+done
 require_root; require_cmd docker; require_cmd curl
 validate_image_state "$CURRENT_IMAGES"
 echo "Beacon production containers"
@@ -23,3 +30,8 @@ curl --fail --silent --show-error --max-time 5 http://127.0.0.1/healthz
 echo
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1/readyz
 echo
+if [[ "$strict" == true ]]; then
+  echo
+  echo "Functional routes"
+  bash "${SCRIPT_DIR}/functional-smoke.sh"
+fi
