@@ -27,7 +27,8 @@ func AtlasAggregateTask(store *db.Store, interval time.Duration) Task {
 	}
 }
 
-// ViewRefreshTask returns a Task that refreshes all materialized views.
+// ViewRefreshTask returns a Task that incrementally updates hourly stats and
+// refreshes the remaining compact materialized views.
 func ViewRefreshTask(store *db.Store, interval time.Duration) Task {
 	return Task{
 		Name:     "view_refresh",

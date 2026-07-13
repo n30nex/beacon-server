@@ -680,6 +680,14 @@ FROM (
 ) counts
 WHERE counts.observer_id = o.id;
 REFRESH MATERIALIZED VIEW mv_hourly_iata_stats;
+INSERT INTO stats_hourly_iata (iata, hour, observation_count, unique_packets, active_observers, refreshed_at)
+SELECT iata, hour, observation_count, unique_packets, active_observers, NOW()
+FROM mv_hourly_iata_stats
+ON CONFLICT (iata, hour) DO UPDATE SET
+  observation_count = EXCLUDED.observation_count,
+  unique_packets = EXCLUDED.unique_packets,
+  active_observers = EXCLUDED.active_observers,
+  refreshed_at = EXCLUDED.refreshed_at;
 REFRESH MATERIALIZED VIEW mv_top_nodes_by_iata;
 REFRESH MATERIALIZED VIEW mv_radio_presets;
 `); err != nil {

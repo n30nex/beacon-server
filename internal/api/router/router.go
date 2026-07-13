@@ -58,6 +58,10 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.W
 		RequestsPerMinute: rateCfg.WebSocketMessagesPerIPPerMinute,
 		Burst:             rateCfg.WebSocketMessageBurst,
 	})
+	opsLimiter := ratelimit.New(ratelimit.Config{
+		RequestsPerMinute: 12,
+		Burst:             3,
+	})
 	if rateCfg.Disabled {
 		restLimiter = nil
 		wsMessageLimiter = nil
@@ -69,6 +73,9 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.W
 		}
 		if wsMessageLimiter != nil {
 			snapshot["websocketMessages"] = wsMessageLimiter.Snapshot()
+		}
+		if opsLimiter != nil {
+			snapshot["operatorDiagnostics"] = opsLimiter.Snapshot()
 		}
 		return snapshot
 	}
@@ -147,6 +154,12 @@ func New(h *hub.Hub, reader api.Reader, workers []*ingest.Worker, wsCfg config.W
 			r.Mount("/atlas", handlers.AtlasRouter(reader))
 			r.Mount("/live", handlers.LiveRouter(reader))
 			r.Mount("/search", handlers.SearchRouter(reader))
+			r.Get("/system/status", handlers.SystemStatusHandler(reader, workers, healthCfg))
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RateLimit(opsLimiter))
+			r.Get("/ops/diagnostics", handlers.DiagnosticsHandler(reader, workers, healthCfg))
 		})
 
 		// Private group — auth middleware applied.

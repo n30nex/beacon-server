@@ -181,7 +181,40 @@ func (s *Store) GetStatsNodeTypes(ctx context.Context, iatas []string) ([]api.No
 }
 
 func (s *Store) RefreshHourlyStats(ctx context.Context) error {
-	return s.q.RefreshHourlyStats(ctx)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck -- commit below is authoritative
+
+	currentHour := time.Now().UTC().Truncate(time.Hour)
+	_, err = tx.Exec(ctx, `
+INSERT INTO stats_hourly_iata (
+  iata, hour, observation_count, unique_packets, active_observers, refreshed_at
+)
+SELECT
+  po.iata,
+  date_trunc('hour', po.heard_at)::timestamptz,
+  COUNT(*)::bigint,
+  COUNT(DISTINCT po.packet_hash)::bigint,
+  COUNT(DISTINCT po.observer_id)::bigint,
+  NOW()
+FROM packet_observations po
+WHERE po.heard_at >= $1
+  AND po.heard_at < $2
+GROUP BY po.iata, date_trunc('hour', po.heard_at)
+ON CONFLICT (iata, hour) DO UPDATE SET
+  observation_count = EXCLUDED.observation_count,
+  unique_packets = EXCLUDED.unique_packets,
+  active_observers = EXCLUDED.active_observers,
+  refreshed_at = EXCLUDED.refreshed_at`, currentHour.Add(-time.Hour), currentHour.Add(time.Hour))
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM stats_hourly_iata WHERE hour < $1`, currentHour.Add(-7*24*time.Hour)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) RefreshTopNodes(ctx context.Context) error {

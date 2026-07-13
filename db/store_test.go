@@ -4,12 +4,40 @@
 package db
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestRunStoreParallelTasksLimitedBoundsConcurrency(t *testing.T) {
+	var active atomic.Int32
+	var maximum atomic.Int32
+	tasks := make([]storeParallelTask, 4)
+	for i := range tasks {
+		tasks[i] = storeParallelTask{name: "bounded", run: func(context.Context) error {
+			current := active.Add(1)
+			for {
+				previous := maximum.Load()
+				if current <= previous || maximum.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+			active.Add(-1)
+			return nil
+		}}
+	}
+	if err := runStoreParallelTasksLimited(context.Background(), 2, tasks...); err != nil {
+		t.Fatal(err)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrency = %d, want 2", got)
+	}
+}
 
 func TestNullableUUID_Zero(t *testing.T) {
 	if nullableUUID(uuid.UUID{}) != nil {

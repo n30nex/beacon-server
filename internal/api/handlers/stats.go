@@ -134,6 +134,21 @@ func parseStatsWindow(r *http.Request) (time.Time, time.Time, string, error) {
 	}
 }
 
+func statsWindowPreset(r *http.Request) string {
+	query := r.URL.Query()
+	if query.Get("since") != "" || query.Get("until") != "" {
+		return ""
+	}
+	switch query.Get("range") {
+	case "7d":
+		return "7d"
+	case "30d":
+		return "30d"
+	default:
+		return "24h"
+	}
+}
+
 func parseStatsLimit(r *http.Request, fallback, max int32) (int32, error) {
 	limit := fallback
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -165,7 +180,14 @@ func parseStatsFilter(r *http.Request, reader api.Reader, fallbackLimit int32) (
 	if err != nil {
 		return api.StatsFilter{}, err
 	}
-	return api.StatsFilter{IATAs: iatas, Since: since, Until: until, Bucket: bucket, Limit: limit}, nil
+	return api.StatsFilter{
+		IATAs:        iatas,
+		Since:        since,
+		Until:        until,
+		Bucket:       bucket,
+		Limit:        limit,
+		WindowPreset: statsWindowPreset(r),
+	}, nil
 }
 
 func parseStatsObserverHealthFilter(r *http.Request, reader api.Reader, fallbackLimit int32) (api.StatsObserverHealthFilter, error) {
@@ -297,45 +319,50 @@ func getStatsHome(reader api.Reader) http.HandlerFunc {
 			topObservers []api.TopObserver
 			wg           sync.WaitGroup
 			errs         = make(chan error, 4)
+			slots        = make(chan struct{}, 2)
 		)
 
-		wg.Add(4)
-		go func() {
-			defer wg.Done()
+		launch := func(run func()) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				slots <- struct{}{}
+				defer func() { <-slots }()
+				run()
+			}()
+		}
+		launch(func() {
 			result, err := reader.GetStatsOverview(r.Context(), filter.IATAs)
 			if err != nil {
 				errs <- err
 				return
 			}
 			overview = result
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		launch(func() {
 			result, err := reader.GetLiveSummary(r.Context(), api.LiveSummaryFilter{IATAs: filter.IATAs, Since: liveSince, Until: filter.Until})
 			if err != nil {
 				errs <- err
 				return
 			}
 			live = result
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		launch(func() {
 			result, err := reader.GetStatsTopNodes(r.Context(), filter.IATAs, 5)
 			if err != nil {
 				errs <- err
 				return
 			}
 			topNodes = result
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		launch(func() {
 			result, err := reader.GetStatsTopObservers(r.Context(), filter.IATAs, filter.Since, 5)
 			if err != nil {
 				errs <- err
 				return
 			}
 			topObservers = result
-		}()
+		})
 		wg.Wait()
 		close(errs)
 

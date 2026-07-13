@@ -349,6 +349,7 @@ func main() {
 		},
 		CacheStatus:        cacheStatus,
 		CacheBackend:       cacheBackend,
+		DiagnosticsToken:   os.Getenv("BEACON_OPS_DIAGNOSTICS_TOKEN"),
 		CacheSnapshot:      cacheSnapshot,
 		BackgroundSnapshot: scheduler.MetricsSnapshot,
 		DatabasePoolSnapshot: func() handlers.DatabasePoolSnapshot {

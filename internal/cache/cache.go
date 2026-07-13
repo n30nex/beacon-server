@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/config"
@@ -42,6 +44,9 @@ type Client struct {
 	flights  singleflight.Group
 	getBytes func(context.Context, string) ([]byte, error)
 	setBytes func(context.Context, string, []byte, time.Duration) error
+
+	statsRefreshOnce sync.Once
+	statsRefreshGate chan struct{}
 }
 
 // NewClient creates a new Redis client from the given address, password, and
@@ -228,6 +233,13 @@ func refreshStale[T any](c *Client, key, category string, policy cachePolicy, fe
 
 func fetchAndMaybeStore[T any](ctx context.Context, c *Client, key, category string, policy cachePolicy, store bool, fetch func(context.Context) (T, error)) (T, error) {
 	var zero T
+	release, err := c.acquireRefreshSlot(ctx, key, category)
+	if err != nil {
+		c.metrics.recordError(category, "refresh_wait", policy.Fresh)
+		c.metrics.recordRefresh(category, err)
+		return zero, err
+	}
+	defer release()
 	value, err := fetch(ctx)
 	if err != nil {
 		c.metrics.recordError(category, "fetch", policy.Fresh)
@@ -259,6 +271,41 @@ func fetchAndMaybeStore[T any](ctx context.Context, c *Client, key, category str
 	}
 	c.metrics.recordRefresh(category, nil)
 	return value, nil
+}
+
+func (c *Client) acquireRefreshSlot(ctx context.Context, key, category string) (func(), error) {
+	if category != CategoryStats || !isHeavyStatsKey(key) {
+		return func() {}, nil
+	}
+	c.statsRefreshOnce.Do(func() {
+		c.statsRefreshGate = make(chan struct{}, 1)
+	})
+	select {
+	case c.statsRefreshGate <- struct{}{}:
+		return func() { <-c.statsRefreshGate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func isHeavyStatsKey(key string) bool {
+	for _, prefix := range []string{
+		keyStatsSummaryPrefix,
+		keyStatsRegionsPrefix,
+		keyStatsPayloadsPrefix,
+		keyStatsHashPrefix,
+		keyStatsTopologyPrefix,
+		keyStatsSubpathsPrefix,
+		keyStatsChannelsPrefix,
+		keyStatsRFHealthPrefix,
+		keyStatsObserverHealthPrefix,
+		keyStatsObserverComparePrefix,
+	} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(key, ":topology:")
 }
 
 func policyForCategory(category string, configuredFresh time.Duration) cachePolicy {

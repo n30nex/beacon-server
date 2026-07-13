@@ -117,7 +117,7 @@ func (s *Store) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*a
 		scopes       []api.ScopeStats
 		health       *api.StatsObserverHealthResponse
 	)
-	if err := runStoreParallelTasks(ctx,
+	if err := runStoreParallelTasksLimited(ctx, 2,
 		storeParallelTask{
 			name: "stats overview",
 			run: func(ctx context.Context) error {

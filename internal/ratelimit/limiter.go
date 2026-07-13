@@ -12,6 +12,8 @@ import (
 type Config struct {
 	RequestsPerMinute int
 	Burst             int
+	IdleTTL           time.Duration
+	MaxBuckets        int
 }
 
 type Snapshot struct {
@@ -31,6 +33,9 @@ type Limiter struct {
 	allowed           atomic.Uint64
 	rejected          atomic.Uint64
 	now               func() time.Time
+	idleTTL           time.Duration
+	maxBuckets        int
+	lastSweep         time.Time
 }
 
 type bucket struct {
@@ -42,12 +47,20 @@ func New(cfg Config) *Limiter {
 	if cfg.RequestsPerMinute <= 0 || cfg.Burst <= 0 {
 		return &Limiter{}
 	}
+	if cfg.IdleTTL <= 0 {
+		cfg.IdleTTL = 10 * time.Minute
+	}
+	if cfg.MaxBuckets <= 0 {
+		cfg.MaxBuckets = 10_000
+	}
 	return &Limiter{
 		buckets:           make(map[string]*bucket),
 		requestsPerMinute: cfg.RequestsPerMinute,
 		burst:             cfg.Burst,
 		tokensPerSecond:   float64(cfg.RequestsPerMinute) / 60,
 		now:               time.Now,
+		idleTTL:           cfg.IdleTTL,
+		maxBuckets:        cfg.MaxBuckets,
 	}
 }
 
@@ -66,9 +79,19 @@ func (l *Limiter) Allow(key string) bool {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) >= l.idleTTL {
+		l.pruneIdle(now)
+		l.lastSweep = now
+	}
 
 	b := l.buckets[key]
 	if b == nil {
+		if len(l.buckets) >= l.maxBuckets {
+			l.pruneIdle(now)
+		}
+		if len(l.buckets) >= l.maxBuckets {
+			l.evictOldest()
+		}
 		b = &bucket{tokens: float64(l.burst), last: now}
 		l.buckets[key] = b
 	}
@@ -89,6 +112,28 @@ func (l *Limiter) Allow(key string) bool {
 	b.tokens--
 	l.allowed.Add(1)
 	return true
+}
+
+func (l *Limiter) pruneIdle(now time.Time) {
+	for key, candidate := range l.buckets {
+		if now.Sub(candidate.last) >= l.idleTTL {
+			delete(l.buckets, key)
+		}
+	}
+}
+
+func (l *Limiter) evictOldest() {
+	var oldestKey string
+	var oldest time.Time
+	for key, candidate := range l.buckets {
+		if oldestKey == "" || candidate.last.Before(oldest) {
+			oldestKey = key
+			oldest = candidate.last
+		}
+	}
+	if oldestKey != "" {
+		delete(l.buckets, oldestKey)
+	}
 }
 
 func (l *Limiter) Snapshot() Snapshot {

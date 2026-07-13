@@ -115,7 +115,7 @@ func (q *Queries) GetCrossIATANeighbors(ctx context.Context, arg GetCrossIATANei
 
 const getHourlyStats = `-- name: GetHourlyStats :many
 SELECT iata, hour, observation_count, unique_packets, active_observers
-FROM mv_hourly_iata_stats
+FROM stats_hourly_iata
 WHERE ($1::text = '' OR iata = ANY(string_to_array($1::text, ',')))
   AND hour >= NOW() - $2::interval
 ORDER BY iata, hour
@@ -2785,15 +2785,6 @@ OR EXISTS (
 // that IATA, or where any hop's prefix_4 is now ambiguous (matches >1 node).
 func (q *Queries) ReconfirmRoutes(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, reconfirmRoutes)
-	return err
-}
-
-const refreshHourlyStats = `-- name: RefreshHourlyStats :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY mv_hourly_iata_stats
-`
-
-func (q *Queries) RefreshHourlyStats(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, refreshHourlyStats)
 	return err
 }
 

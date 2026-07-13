@@ -5,7 +5,10 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/MeshCore-Beacon/beacon-server/internal/api"
@@ -27,6 +30,7 @@ type HealthConfig struct {
 	RequestSnapshot      func() mw.RequestMetricsSnapshot
 	DatabasePoolSnapshot func() DatabasePoolSnapshot
 	BackupSnapshot       func() *BackupSnapshot
+	DiagnosticsToken     string
 }
 
 type BuildProvenance struct {
@@ -53,6 +57,30 @@ type BackupSnapshot struct {
 	AgeMs           int64  `json:"ageMs,omitempty"`
 	ListVerified    bool   `json:"listVerified"`
 	RestoreVerified bool   `json:"restoreVerified"`
+}
+
+type LivenessResponse struct {
+	Status     string `json:"status"`
+	ServerTime int64  `json:"serverTime"`
+	Version    string `json:"version"`
+}
+
+type ReadinessResponse struct {
+	Status     string `json:"status"`
+	Ready      bool   `json:"ready"`
+	ServerTime int64  `json:"serverTime"`
+}
+
+type PublicComponentStatus struct {
+	Status string `json:"status"`
+}
+
+type SystemStatusResponse struct {
+	Status      string                `json:"status"`
+	ServerTime  int64                 `json:"serverTime"`
+	Ingest      PublicComponentStatus `json:"ingest"`
+	LiveTraffic PublicComponentStatus `json:"liveTraffic"`
+	Analytics   PublicComponentStatus `json:"analytics"`
 }
 
 type HealthDependency struct {
@@ -99,7 +127,11 @@ func buildHealthSnapshot(ctx context.Context, reader api.Reader, workers []*inge
 
 	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := reader.ListRegions(dbCtx); err != nil {
+	if reader == nil {
+		status = "degraded"
+		ready = false
+		deps["database"] = HealthDependency{Status: "down", Detail: "reader unavailable"}
+	} else if _, err := reader.ListRegions(dbCtx); err != nil {
 		status = "degraded"
 		ready = false
 		deps["database"] = HealthDependency{Status: "down", Detail: err.Error()}
@@ -252,12 +284,13 @@ func backgroundSnapshot(cfg HealthConfig) map[string]background.TaskSnapshot {
 //	@Summary	Get runtime health
 //	@Tags		Health
 //	@Produce	json
-//	@Success	200	{object}	handlers.HealthResponse
-//	@Failure	503	{object}	handlers.HealthResponse
+//	@Success	200	{object}	handlers.LivenessResponse
 //	@Router		/healthz [get]
-func HealthHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		respondHealth(w, buildHealthSnapshot(r.Context(), reader, workers, cfg), cfg, "health", false)
+func HealthHandler(_ api.Reader, _ []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		respond(w, http.StatusOK, LivenessResponse{
+			Status: "ok", ServerTime: time.Now().UnixMilli(), Version: cfg.Version,
+		})
 	}
 }
 
@@ -266,11 +299,91 @@ func HealthHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig
 //	@Summary	Get runtime readiness
 //	@Tags		Health
 //	@Produce	json
-//	@Success	200	{object}	handlers.HealthResponse
-//	@Failure	503	{object}	handlers.HealthResponse
+//	@Success	200	{object}	handlers.ReadinessResponse
+//	@Failure	503	{object}	handlers.ReadinessResponse
 //	@Router		/readyz [get]
 func ReadinessHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		respondHealth(w, buildHealthSnapshot(r.Context(), reader, workers, cfg), cfg, "readiness", true)
+		snapshot := buildHealthSnapshot(r.Context(), reader, workers, cfg)
+		statusCode := http.StatusOK
+		if !snapshot.ready {
+			statusCode = http.StatusServiceUnavailable
+		}
+		respond(w, statusCode, ReadinessResponse{
+			Status: snapshot.status, Ready: snapshot.ready, ServerTime: snapshot.serverTime,
+		})
+	}
+}
+
+// SystemStatusHandler exposes only coarse public operational state.
+func SystemStatusHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		snapshot := buildHealthSnapshot(r.Context(), reader, workers, cfg)
+		ingestStatus := "ok"
+		connected := 0
+		for _, broker := range snapshot.brokers {
+			if broker.Connected {
+				connected++
+			}
+		}
+		switch {
+		case len(snapshot.brokers) == 0 || connected == 0:
+			ingestStatus = "unavailable"
+		case connected != len(snapshot.brokers):
+			ingestStatus = "degraded"
+		}
+
+		analyticsStatus := "ok"
+		if snapshot.dependencies["database"].Status == "down" {
+			analyticsStatus = "unavailable"
+		} else {
+			for route, metrics := range requestSnapshot(cfg).Routes {
+				if strings.Contains(route, "/stats/") && (metrics.P95DurationMs > metrics.TargetMs || metrics.HardDeadlineBreaches > 0 || metrics.Errors > 0) {
+					analyticsStatus = "degraded"
+					break
+				}
+			}
+		}
+
+		overall := worstPublicStatus(ingestStatus, analyticsStatus)
+		respond(w, http.StatusOK, SystemStatusResponse{
+			Status:      overall,
+			ServerTime:  snapshot.serverTime,
+			Ingest:      PublicComponentStatus{Status: ingestStatus},
+			LiveTraffic: PublicComponentStatus{Status: ingestStatus},
+			Analytics:   PublicComponentStatus{Status: analyticsStatus},
+		})
+	}
+}
+
+func worstPublicStatus(statuses ...string) string {
+	worst := "ok"
+	for _, status := range statuses {
+		if status == "unavailable" {
+			return "unavailable"
+		}
+		if status == "degraded" {
+			worst = "degraded"
+		}
+	}
+	return worst
+}
+
+// DiagnosticsHandler exposes detailed runtime diagnostics to authenticated operators.
+func DiagnosticsHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cfg.DiagnosticsToken == "" {
+			respondError(w, http.StatusServiceUnavailable, "operator diagnostics unavailable")
+			return
+		}
+		provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		expectedHash := sha256.Sum256([]byte(cfg.DiagnosticsToken))
+		providedHash := sha256.Sum256([]byte(provided))
+		if provided == "" || subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="beacon-ops"`)
+			respondError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		respondHealth(w, buildHealthSnapshot(r.Context(), reader, workers, cfg), cfg, "diagnostics", false)
 	}
 }

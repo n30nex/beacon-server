@@ -81,11 +81,12 @@ type NodeTypeCount struct {
 // StatsFilter carries the common geography and time-window inputs used by the
 // operator console aggregate endpoints.
 type StatsFilter struct {
-	IATAs  []string
-	Since  time.Time
-	Until  time.Time
-	Bucket string
-	Limit  int32
+	IATAs        []string
+	Since        time.Time
+	Until        time.Time
+	Bucket       string
+	Limit        int32
+	WindowPreset string
 }
 
 // StatsObserverHealthFilter extends StatsFilter with the freshness threshold

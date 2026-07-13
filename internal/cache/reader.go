@@ -137,53 +137,80 @@ func liveCacheWindow(since, until time.Time, bucket time.Duration) (time.Time, t
 	return since, until
 }
 
-func statsCacheWindow(since, until time.Time, ttl time.Duration) (time.Time, time.Time) {
+func exactStatsCacheWindow(since, until time.Time, ttl time.Duration) (time.Time, time.Time) {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
 	if until.IsZero() {
-		until = time.Now()
+		until = time.Now().Truncate(ttl)
 	}
-	until = until.Truncate(ttl)
 	if since.IsZero() {
 		since = until.Add(-24 * time.Hour)
-	} else {
-		since = since.Truncate(ttl)
 	}
 	return since, until
 }
 
-func statsFilterCacheKey(prefix string, filter api.StatsFilter, cacheBucket time.Duration) string {
-	since, until := statsCacheWindow(filter.Since, filter.Until, cacheBucket)
+func quantizeStatsTime(value time.Time, bucket time.Duration) time.Time {
+	if value.IsZero() || bucket <= 0 {
+		return value
+	}
+	return value.Truncate(bucket)
+}
+
+func normalizeStatsCacheFilter(filter api.StatsFilter, cacheBucket time.Duration) (api.StatsFilter, string) {
+	if filter.WindowPreset != "" {
+		until := time.Now()
+		if cacheBucket > 0 {
+			until = until.Truncate(cacheBucket)
+		}
+		window := 24 * time.Hour
+		switch filter.WindowPreset {
+		case "7d":
+			window = 7 * 24 * time.Hour
+		case "30d":
+			window = 30 * 24 * time.Hour
+		}
+		filter.Until = until
+		filter.Since = until.Add(-window)
+		return filter, "preset:" + filter.WindowPreset
+	}
+	filter.Since, filter.Until = exactStatsCacheWindow(filter.Since, filter.Until, cacheBucket)
+	return filter, fmt.Sprintf("exact:%d:%d", filter.Since.UnixMilli(), filter.Until.UnixMilli())
+}
+
+func statsFilterCacheKey(prefix string, filter api.StatsFilter, cacheBucket time.Duration) (string, api.StatsFilter) {
+	filter, windowKey := normalizeStatsCacheFilter(filter, cacheBucket)
 	return fmt.Sprintf(
-		"%s%s:%d:%d:%s:%d",
+		"%s%s:%s:%s:%d",
 		prefix,
 		iataCacheSegment(filter.IATAs),
-		since.UnixMilli(),
-		until.UnixMilli(),
+		windowKey,
 		filter.Bucket,
 		filter.Limit,
-	)
+	), filter
 }
 
-func statsObserverHealthCacheKey(prefix string, filter api.StatsObserverHealthFilter, cacheBucket time.Duration) string {
-	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
-	return fmt.Sprintf("%s:%d", base, int64(filter.StaleAfter/time.Minute))
+func statsObserverHealthCacheKey(prefix string, filter api.StatsObserverHealthFilter, cacheBucket time.Duration) (string, api.StatsObserverHealthFilter) {
+	base, normalized := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
+	filter.StatsFilter = normalized
+	return fmt.Sprintf("%s:%d", base, int64(filter.StaleAfter/time.Minute)), filter
 }
 
-func statsObserverCompareCacheKey(prefix string, filter api.StatsObserverCompareFilter, cacheBucket time.Duration) string {
-	base := statsObserverHealthCacheKey(prefix, filter.StatsObserverHealthFilter, cacheBucket)
+func statsObserverCompareCacheKey(prefix string, filter api.StatsObserverCompareFilter, cacheBucket time.Duration) (string, api.StatsObserverCompareFilter) {
+	base, normalized := statsObserverHealthCacheKey(prefix, filter.StatsObserverHealthFilter, cacheBucket)
+	filter.StatsObserverHealthFilter = normalized
 	ids := make([]string, 0, len(filter.ObserverIDs))
 	for _, id := range filter.ObserverIDs {
 		ids = append(ids, id.String())
 	}
 	sort.Strings(ids)
-	return fmt.Sprintf("%s:%s", base, strings.Join(ids, ","))
+	return fmt.Sprintf("%s:%s", base, strings.Join(ids, ",")), filter
 }
 
-func statsHashPrefixCacheKey(prefix string, filter api.StatsHashPrefixFilter, cacheBucket time.Duration) string {
-	base := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
-	return fmt.Sprintf("%s:%s:%d", base, filter.Prefix, filter.HashSize)
+func statsHashPrefixCacheKey(prefix string, filter api.StatsHashPrefixFilter, cacheBucket time.Duration) (string, api.StatsHashPrefixFilter) {
+	base, normalized := statsFilterCacheKey(prefix, filter.StatsFilter, cacheBucket)
+	filter.StatsFilter = normalized
+	return fmt.Sprintf("%s:%s:%d", base, filter.Prefix, filter.HashSize), filter
 }
 
 func knownRoutesCacheKey(iatas []string, hopCount int32, cursor time.Time, limit int32) string {
@@ -320,6 +347,7 @@ func (cr *CachedReader) GetStatsObservations(ctx context.Context, iatas []string
 		sort.Strings(sorted)
 		segment = strings.Join(sorted, ",")
 	}
+	since = quantizeStatsTime(since, cr.ttl.Stats)
 	key := fmt.Sprintf("%s%s:%d", keyStatsObservationsPrefix, segment, since.UnixMilli())
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.ObservationPoint, error) {
 		return cr.inner.GetStatsObservations(fetchCtx, iatas, since)
@@ -334,6 +362,7 @@ func (cr *CachedReader) GetStatsPayloadBreakdown(ctx context.Context, iatas []st
 		sort.Strings(sorted)
 		segment = strings.Join(sorted, ",")
 	}
+	since = quantizeStatsTime(since, cr.ttl.Stats)
 	key := fmt.Sprintf("%s%s:%d", keyStatsBreakdownPrefix, segment, since.UnixMilli())
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.PayloadBreakdownItem, error) {
 		return cr.inner.GetStatsPayloadBreakdown(fetchCtx, iatas, since)
@@ -370,7 +399,7 @@ func (cr *CachedReader) GetStatsNodeTypes(ctx context.Context, iatas []string) (
 
 // GetStatsSummary implements [api.Reader].
 func (cr *CachedReader) GetStatsSummary(ctx context.Context, filter api.StatsFilter) (*api.StatsSummary, error) {
-	key := statsFilterCacheKey(keyStatsSummaryPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsSummaryPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsSummary, error) {
 		return cr.inner.GetStatsSummary(fetchCtx, filter)
 	})
@@ -378,7 +407,7 @@ func (cr *CachedReader) GetStatsSummary(ctx context.Context, filter api.StatsFil
 
 // GetStatsRegions implements [api.Reader].
 func (cr *CachedReader) GetStatsRegions(ctx context.Context, filter api.StatsFilter) (*api.StatsRegions, error) {
-	key := statsFilterCacheKey(keyStatsRegionsPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsRegionsPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsRegions, error) {
 		return cr.inner.GetStatsRegions(fetchCtx, filter)
 	})
@@ -386,7 +415,7 @@ func (cr *CachedReader) GetStatsRegions(ctx context.Context, filter api.StatsFil
 
 // GetStatsPayloads implements [api.Reader].
 func (cr *CachedReader) GetStatsPayloads(ctx context.Context, filter api.StatsFilter) (*api.StatsPayloads, error) {
-	key := statsFilterCacheKey(keyStatsPayloadsPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsPayloadsPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsPayloads, error) {
 		return cr.inner.GetStatsPayloads(fetchCtx, filter)
 	})
@@ -394,7 +423,7 @@ func (cr *CachedReader) GetStatsPayloads(ctx context.Context, filter api.StatsFi
 
 // GetStatsHashAnalytics implements [api.Reader].
 func (cr *CachedReader) GetStatsHashAnalytics(ctx context.Context, filter api.StatsFilter) (*api.StatsHashAnalytics, error) {
-	key := statsFilterCacheKey(keyStatsHashPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsHashPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsHashAnalytics, error) {
 		return cr.inner.GetStatsHashAnalytics(fetchCtx, filter)
 	})
@@ -402,7 +431,7 @@ func (cr *CachedReader) GetStatsHashAnalytics(ctx context.Context, filter api.St
 
 // GetStatsHashPrefixLookup implements [api.Reader].
 func (cr *CachedReader) GetStatsHashPrefixLookup(ctx context.Context, filter api.StatsHashPrefixFilter) (*api.StatsHashPrefixLookup, error) {
-	key := statsHashPrefixCacheKey(keyStatsHashPrefixLookup, filter, cr.ttl.Stats)
+	key, filter := statsHashPrefixCacheKey(keyStatsHashPrefixLookup, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsHashPrefixLookup, error) {
 		return cr.inner.GetStatsHashPrefixLookup(fetchCtx, filter)
 	})
@@ -410,7 +439,7 @@ func (cr *CachedReader) GetStatsHashPrefixLookup(ctx context.Context, filter api
 
 // GetStatsTopology implements [api.Reader].
 func (cr *CachedReader) GetStatsTopology(ctx context.Context, filter api.StatsFilter) (*api.StatsTopology, error) {
-	key := statsFilterCacheKey(keyStatsTopologyPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsTopologyPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsTopology, error) {
 		return cr.inner.GetStatsTopology(fetchCtx, filter)
 	})
@@ -418,7 +447,7 @@ func (cr *CachedReader) GetStatsTopology(ctx context.Context, filter api.StatsFi
 
 // GetStatsSubpaths implements [api.Reader].
 func (cr *CachedReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*api.StatsSubpaths, error) {
-	key := statsFilterCacheKey(keyStatsSubpathsPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsSubpathsPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsSubpaths, error) {
 		return cr.inner.GetStatsSubpaths(fetchCtx, filter)
 	})
@@ -426,7 +455,7 @@ func (cr *CachedReader) GetStatsSubpaths(ctx context.Context, filter api.StatsFi
 
 // GetStatsChannels implements [api.Reader].
 func (cr *CachedReader) GetStatsChannels(ctx context.Context, filter api.StatsFilter) (*api.StatsChannels, error) {
-	key := statsFilterCacheKey(keyStatsChannelsPrefix, filter, cr.ttl.Stats)
+	key, filter := statsFilterCacheKey(keyStatsChannelsPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsChannels, error) {
 		return cr.inner.GetStatsChannels(fetchCtx, filter)
 	})
@@ -434,7 +463,7 @@ func (cr *CachedReader) GetStatsChannels(ctx context.Context, filter api.StatsFi
 
 // GetStatsRFHealth implements [api.Reader].
 func (cr *CachedReader) GetStatsRFHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsRFHealth, error) {
-	key := statsObserverHealthCacheKey(keyStatsRFHealthPrefix, filter, cr.ttl.Stats)
+	key, filter := statsObserverHealthCacheKey(keyStatsRFHealthPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsRFHealth, error) {
 		return cr.inner.GetStatsRFHealth(fetchCtx, filter)
 	})
@@ -442,7 +471,7 @@ func (cr *CachedReader) GetStatsRFHealth(ctx context.Context, filter api.StatsOb
 
 // GetStatsObserverHealth implements [api.Reader].
 func (cr *CachedReader) GetStatsObserverHealth(ctx context.Context, filter api.StatsObserverHealthFilter) (*api.StatsObserverHealthResponse, error) {
-	key := statsObserverHealthCacheKey(keyStatsObserverHealthPrefix, filter, cr.ttl.Stats)
+	key, filter := statsObserverHealthCacheKey(keyStatsObserverHealthPrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsObserverHealthResponse, error) {
 		return cr.inner.GetStatsObserverHealth(fetchCtx, filter)
 	})
@@ -450,7 +479,7 @@ func (cr *CachedReader) GetStatsObserverHealth(ctx context.Context, filter api.S
 
 // GetStatsObserverCompare implements [api.Reader].
 func (cr *CachedReader) GetStatsObserverCompare(ctx context.Context, filter api.StatsObserverCompareFilter) (*api.StatsObserverCompare, error) {
-	key := statsObserverCompareCacheKey(keyStatsObserverComparePrefix, filter, cr.ttl.Stats)
+	key, filter := statsObserverCompareCacheKey(keyStatsObserverComparePrefix, filter, cr.ttl.Stats)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.StatsObserverCompare, error) {
 		return cr.inner.GetStatsObserverCompare(fetchCtx, filter)
 	})
@@ -464,6 +493,7 @@ func (cr *CachedReader) GetStatsTopObservers(ctx context.Context, iatas []string
 		sort.Strings(sorted)
 		segment = strings.Join(sorted, ",")
 	}
+	since = quantizeStatsTime(since, cr.ttl.Stats)
 	key := fmt.Sprintf("%s%s:%d:%d", keyStatsTopObsPrefix, segment, since.UnixMilli(), limit)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) ([]api.TopObserver, error) {
 		return cr.inner.GetStatsTopObservers(fetchCtx, iatas, since, limit)
@@ -665,7 +695,8 @@ func (cr *CachedReader) ListTraceTags(ctx context.Context, iatas []string, scope
 
 // GetObserverTopology implements [api.Reader].
 func (cr *CachedReader) GetObserverTopology(ctx context.Context, observerID uuid.UUID, filter api.StatsFilter) (*api.ObserverTopologySummary, error) {
-	key := fmt.Sprintf("%s%s:%s", keyObserverPrefix, observerID.String(), statsFilterCacheKey("topology:", filter, cr.ttl.Stats))
+	topologyKey, filter := statsFilterCacheKey("topology:", filter, cr.ttl.Stats)
+	key := fmt.Sprintf("%s%s:%s", keyObserverPrefix, observerID.String(), topologyKey)
 	return getOrSet(ctx, cr.c, key, cr.ttl.Stats, func(fetchCtx context.Context) (*api.ObserverTopologySummary, error) {
 		return cr.inner.GetObserverTopology(fetchCtx, observerID, filter)
 	})

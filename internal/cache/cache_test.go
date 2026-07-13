@@ -7,11 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/MeshCore-Beacon/beacon-server/internal/api"
 	"github.com/MeshCore-Beacon/beacon-server/internal/config"
 	redis "github.com/redis/go-redis/v9"
 )
@@ -136,4 +140,81 @@ func TestGetOrSetServesStaleWhenRefreshFails(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("expected failed refresh metric while stale value remained available")
+}
+
+func TestStatsPresetCacheKeyIsStableAndNormalizesQueryWindow(t *testing.T) {
+	first := api.StatsFilter{
+		IATAs:        []string{"YVR", "YYJ"},
+		Since:        time.Unix(1, 0),
+		Until:        time.Unix(2, 0),
+		Bucket:       "1h",
+		Limit:        25,
+		WindowPreset: "24h",
+	}
+	second := first
+	second.IATAs = []string{"YYJ", "YVR"}
+	second.Since = time.Unix(3, 0)
+	second.Until = time.Unix(4, 0)
+
+	firstKey, firstNormalized := statsFilterCacheKey(keyStatsSummaryPrefix, first, time.Hour)
+	secondKey, secondNormalized := statsFilterCacheKey(keyStatsSummaryPrefix, second, time.Hour)
+
+	if firstKey != secondKey {
+		t.Fatalf("preset cache keys differ: %q != %q", firstKey, secondKey)
+	}
+	if got := firstNormalized.Until.Sub(firstNormalized.Since); got != 24*time.Hour {
+		t.Fatalf("normalized preset window = %s, want 24h", got)
+	}
+	if !firstNormalized.Since.Equal(secondNormalized.Since) || !firstNormalized.Until.Equal(secondNormalized.Until) {
+		t.Fatalf("normalized preset queries differ: %#v != %#v", firstNormalized, secondNormalized)
+	}
+}
+
+func TestStatsExactCacheKeyPreservesExplicitTimestamps(t *testing.T) {
+	since := time.Date(2026, 7, 12, 10, 17, 23, 456000000, time.UTC)
+	until := since.Add(37*time.Minute + 12*time.Second)
+	key, normalized := statsFilterCacheKey(keyStatsSummaryPrefix, api.StatsFilter{
+		Since: since, Until: until, Bucket: "1h", Limit: 25,
+	}, time.Hour)
+
+	if !normalized.Since.Equal(since) || !normalized.Until.Equal(until) {
+		t.Fatalf("explicit timestamps changed: %#v", normalized)
+	}
+	wantWindow := "exact:" + strconv.FormatInt(since.UnixMilli(), 10) + ":" + strconv.FormatInt(until.UnixMilli(), 10)
+	if !strings.Contains(key, wantWindow) {
+		t.Fatalf("cache key %q does not contain %q", key, wantWindow)
+	}
+}
+
+func TestStatsRefreshesAreGloballySerialized(t *testing.T) {
+	client := newMemoryCacheClient(nil)
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := getOrSet(context.Background(), client, fmt.Sprintf("%s%d", keyStatsSummaryPrefix, i), time.Hour, func(context.Context) (int, error) {
+				current := active.Add(1)
+				for {
+					previous := maxActive.Load()
+					if current <= previous || maxActive.CompareAndSwap(previous, current) {
+						break
+					}
+				}
+				time.Sleep(15 * time.Millisecond)
+				active.Add(-1)
+				return i, nil
+			})
+			if err != nil {
+				t.Errorf("getOrSet: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := maxActive.Load(); got != 1 {
+		t.Fatalf("maximum concurrent stats refreshes = %d, want 1", got)
+	}
 }

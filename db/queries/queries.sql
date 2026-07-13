@@ -697,7 +697,7 @@ WHERE po.heard_at > NOW() - INTERVAL '24 hours'
 
 -- name: GetHourlyStats :many
 SELECT iata, hour, observation_count, unique_packets, active_observers
-FROM mv_hourly_iata_stats
+FROM stats_hourly_iata
 WHERE ($1::text = '' OR iata = ANY(string_to_array($1::text, ',')))
   AND hour >= NOW() - $2::interval
 ORDER BY iata, hour;
@@ -952,9 +952,6 @@ WHERE ns.iata = $1
     WHEN cardinality($2::bytea[]) > 0 AND length($2[1]) = 4 THEN ns.prefix_4 = ANY($2)
     ELSE FALSE
   END;
-
--- name: RefreshHourlyStats :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY mv_hourly_iata_stats;
 
 -- name: RefreshTopNodes :exec
 REFRESH MATERIALIZED VIEW CONCURRENTLY mv_top_nodes_by_iata;

@@ -281,8 +281,16 @@ type storeParallelTask struct {
 }
 
 func runStoreParallelTasks(ctx context.Context, tasks ...storeParallelTask) error {
+	return runStoreParallelTasksLimited(ctx, len(tasks), tasks...)
+}
+
+func runStoreParallelTasksLimited(ctx context.Context, limit int, tasks ...storeParallelTask) error {
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if limit < 1 {
+		limit = 1
+	}
+	slots := make(chan struct{}, limit)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -292,6 +300,12 @@ func runStoreParallelTasks(ctx context.Context, tasks ...storeParallelTask) erro
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-taskCtx.Done():
+				return
+			}
 			if err := task.run(taskCtx); err != nil {
 				mu.Lock()
 				if firstErr == nil {
