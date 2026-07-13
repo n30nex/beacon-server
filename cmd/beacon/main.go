@@ -156,7 +156,7 @@ func main() {
 		log.Fatalf("failed to parse postgres DSN: %v", err)
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "beacon-interactive"
-	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = getEnvDefault("POSTGRES_INTERACTIVE_STATEMENT_TIMEOUT", "5s")
+	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = getEnvDefault("POSTGRES_INTERACTIVE_STATEMENT_TIMEOUT", "15s")
 	poolConfig.ConnConfig.RuntimeParams["lock_timeout"] = getEnvDefault("POSTGRES_INTERACTIVE_LOCK_TIMEOUT", "500ms")
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
