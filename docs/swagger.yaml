@@ -3147,6 +3147,42 @@ definitions:
       version:
         type: string
     type: object
+  internal_api_handlers.LivenessResponse:
+    properties:
+      serverTime:
+        type: integer
+      status:
+        type: string
+      version:
+        type: string
+    type: object
+  internal_api_handlers.PublicComponentStatus:
+    properties:
+      status:
+        type: string
+    type: object
+  internal_api_handlers.ReadinessResponse:
+    properties:
+      ready:
+        type: boolean
+      serverTime:
+        type: integer
+      status:
+        type: string
+    type: object
+  internal_api_handlers.SystemStatusResponse:
+    properties:
+      analytics:
+        $ref: '#/definitions/internal_api_handlers.PublicComponentStatus'
+      ingest:
+        $ref: '#/definitions/internal_api_handlers.PublicComponentStatus'
+      liveTraffic:
+        $ref: '#/definitions/internal_api_handlers.PublicComponentStatus'
+      serverTime:
+        type: integer
+      status:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact:
@@ -3420,11 +3456,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_api_handlers.HealthResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+            $ref: '#/definitions/internal_api_handlers.LivenessResponse'
       summary: Get runtime health
       tags:
       - Health
@@ -4272,6 +4304,28 @@ paths:
       summary: Get observer topology summary
       tags:
       - Observers
+  /ops/diagnostics:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_api_handlers.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get detailed operator diagnostics
+      tags:
+      - Health
   /packets:
     get:
       parameters:
@@ -4442,11 +4496,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+            $ref: '#/definitions/internal_api_handlers.ReadinessResponse'
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/internal_api_handlers.HealthResponse'
+            $ref: '#/definitions/internal_api_handlers.ReadinessResponse'
       summary: Get runtime readiness
       tags:
       - Health
@@ -5627,6 +5681,18 @@ paths:
       summary: Stats verified-route topology analytics
       tags:
       - Stats
+  /system/status:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.SystemStatusResponse'
+      summary: Get coarse public system status
+      tags:
+      - Health
   /traces:
     get:
       parameters:
@@ -5743,6 +5809,12 @@ paths:
 schemes:
 - http
 - https
+securityDefinitions:
+  BearerAuth:
+    description: Operator diagnostics token using the Bearer scheme.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"
 tags:
 - description: Airport/location codes that group observers and packets

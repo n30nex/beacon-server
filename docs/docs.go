@@ -420,13 +420,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                            "$ref": "#/definitions/internal_api_handlers.LivenessResponse"
                         }
                     }
                 }
@@ -1719,6 +1713,42 @@ const docTemplate = `{
                 }
             }
         },
+        "/ops/diagnostics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Get detailed operator diagnostics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/packets": {
             "get": {
                 "produces": [
@@ -1974,13 +2004,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                            "$ref": "#/definitions/internal_api_handlers.ReadinessResponse"
                         }
                     },
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/internal_api_handlers.HealthResponse"
+                            "$ref": "#/definitions/internal_api_handlers.ReadinessResponse"
                         }
                     }
                 }
@@ -3783,6 +3813,25 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/internal_api_handlers.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/system/status": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Get coarse public system status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.SystemStatusResponse"
                         }
                     }
                 }
@@ -8687,6 +8736,70 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "internal_api_handlers.LivenessResponse": {
+            "type": "object",
+            "properties": {
+                "serverTime": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.PublicComponentStatus": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.ReadinessResponse": {
+            "type": "object",
+            "properties": {
+                "ready": {
+                    "type": "boolean"
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.SystemStatusResponse": {
+            "type": "object",
+            "properties": {
+                "analytics": {
+                    "$ref": "#/definitions/internal_api_handlers.PublicComponentStatus"
+                },
+                "ingest": {
+                    "$ref": "#/definitions/internal_api_handlers.PublicComponentStatus"
+                },
+                "liveTraffic": {
+                    "$ref": "#/definitions/internal_api_handlers.PublicComponentStatus"
+                },
+                "serverTime": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Operator diagnostics token using the Bearer scheme.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     },
     "tags": [

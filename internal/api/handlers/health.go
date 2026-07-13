@@ -315,7 +315,13 @@ func ReadinessHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthCon
 	}
 }
 
-// SystemStatusHandler exposes only coarse public operational state.
+// SystemStatusHandler godoc
+//
+//	@Summary	Get coarse public system status
+//	@Tags		Health
+//	@Produce	json
+//	@Success	200	{object}	handlers.SystemStatusResponse
+//	@Router		/system/status [get]
 func SystemStatusHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := buildHealthSnapshot(r.Context(), reader, workers, cfg)
@@ -369,7 +375,16 @@ func worstPublicStatus(statuses ...string) string {
 	return worst
 }
 
-// DiagnosticsHandler exposes detailed runtime diagnostics to authenticated operators.
+// DiagnosticsHandler godoc
+//
+//	@Summary	Get detailed operator diagnostics
+//	@Tags		Health
+//	@Produce	json
+//	@Security	BearerAuth
+//	@Success	200	{object}	handlers.HealthResponse
+//	@Failure	401	{object}	handlers.APIError
+//	@Failure	503	{object}	handlers.APIError
+//	@Router		/ops/diagnostics [get]
 func DiagnosticsHandler(reader api.Reader, workers []*ingest.Worker, cfg HealthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cfg.DiagnosticsToken == "" {

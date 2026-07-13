@@ -61,6 +61,11 @@ var (
 
 //	@schemes	http https
 
+//	@securityDefinitions.apikey	BearerAuth
+//	@in					header
+//	@name				Authorization
+//	@description			Operator diagnostics token using the Bearer scheme.
+
 // @tag.name			IATAs
 // @tag.description	Airport/location codes that group observers and packets
 // @tag.name			Regions
