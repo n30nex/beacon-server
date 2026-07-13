@@ -758,6 +758,16 @@ func exerciseHotPaths(tb testing.TB, store *Store, fx hotPathFixture) {
 	if stats.Overview.TotalObservations == 0 || len(stats.TopNodes) == 0 {
 		tb.Fatalf("GetStatsSummary returned incomplete payload: %#v", stats)
 	}
+	subpaths, err := store.GetStatsSubpaths(ctx, api.StatsFilter{IATAs: fx.IATAs, Since: fx.Since, Until: fx.Until, Bucket: "1h", Limit: 25})
+	if err != nil {
+		tb.Fatalf("GetStatsSubpaths: %v", err)
+	}
+	if subpaths.RouteCount == 0 || subpaths.AnalyzedRouteCount == 0 || len(subpaths.TopSubpaths) == 0 {
+		tb.Fatalf("GetStatsSubpaths returned incomplete payload: %#v", subpaths)
+	}
+	if subpaths.AnalyzedRouteCount > int64(subpaths.SourceRouteLimit) || subpaths.SourceRouteLimit != statsMaxSubpathRoutes {
+		tb.Fatalf("GetStatsSubpaths returned invalid source bound: %#v", subpaths)
+	}
 	health, err := store.GetStatsObserverHealth(ctx, api.StatsObserverHealthFilter{
 		StatsFilter: api.StatsFilter{IATAs: fx.IATAs, Since: fx.Since, Until: fx.Until, Bucket: "1h", Limit: 100},
 		StaleAfter:  15 * time.Minute,

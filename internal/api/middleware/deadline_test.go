@@ -37,10 +37,29 @@ func TestRequestDeadlineAllowsColdStatsCacheWarmup(t *testing.T) {
 	}))
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/stats/summary", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/stats/regions", nil))
 
 	if remaining < 19*time.Second || remaining > 20*time.Second {
 		t.Fatalf("stats deadline remaining = %s, want approximately 20s", remaining)
+	}
+}
+
+func TestRequestDeadlineAllowsLegacySummaryWarmup(t *testing.T) {
+	var remaining time.Duration
+	handler := RequestDeadline(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline, ok := r.Context().Deadline()
+		if !ok {
+			t.Fatal("summary request did not receive a deadline")
+		}
+		remaining = time.Until(deadline)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/stats/summary", nil))
+
+	if remaining < 59*time.Second || remaining > 60*time.Second {
+		t.Fatalf("summary deadline remaining = %s, want approximately 60s", remaining)
 	}
 }
 

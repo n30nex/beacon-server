@@ -22,6 +22,7 @@ const (
 	statsDefaultLimit      = int32(25)
 	statsDefaultStaleAfter = 30 * time.Minute
 	statsMaxSubpathNodes   = int32(6)
+	statsMaxSubpathRoutes  = int32(5000)
 )
 
 func normalizeStatsFilter(filter api.StatsFilter) api.StatsFilter {
@@ -1318,12 +1319,15 @@ func (s *Store) GetStatsSubpaths(ctx context.Context, filter api.StatsFilter) (*
 
 	if err := s.pool.QueryRow(ctx, `
 WITH routes AS (
-  SELECT id, iata, node_ids, observation_count, last_seen
+  SELECT id, iata, node_ids, observation_count, last_seen,
+         COUNT(*) OVER()::bigint AS total_route_count
   FROM known_routes
   WHERE last_seen >= $1
     AND last_seen <= $2
     AND array_length(node_ids, 1) >= 2
     AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY observation_count DESC, last_seen DESC, id ASC
+  LIMIT $5
 ),
 subpaths AS (
   SELECT
@@ -1338,13 +1342,15 @@ subpaths AS (
     AND (end_ord - start_ord + 1) <= $4
 )
 SELECT
+  (SELECT COALESCE(MAX(total_route_count), 0)::bigint FROM routes),
   (SELECT COUNT(*)::bigint FROM routes),
   COUNT(*)::bigint,
   COUNT(DISTINCT subpaths.node_ids::text)::bigint,
   COALESCE(SUM(subpaths.observation_count), 0)::bigint,
   COALESCE(AVG(subpaths.node_count), 0)::float8
-FROM subpaths`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes).Scan(
+FROM subpaths`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, statsMaxSubpathRoutes).Scan(
 		&response.RouteCount,
+		&response.AnalyzedRouteCount,
 		&response.SubpathCount,
 		&response.UniqueSubpathCount,
 		&response.ObservationCount,
@@ -1352,6 +1358,8 @@ FROM subpaths`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes).Sc
 	); err != nil {
 		return nil, err
 	}
+	response.SourceRouteLimit = statsMaxSubpathRoutes
+	response.Truncated = response.RouteCount > response.AnalyzedRouteCount
 
 	lengths, err := s.getStatsSubpathLengthBuckets(ctx, filter, iataFilter)
 	if err != nil {
@@ -1388,6 +1396,8 @@ WITH routes AS (
     AND last_seen <= $2
     AND array_length(node_ids, 1) >= 2
     AND ($3::text = '' OR iata = ANY(string_to_array($3::text, ',')))
+  ORDER BY observation_count DESC, last_seen DESC, id ASC
+  LIMIT $5
 ),
 subpaths AS (
   SELECT
@@ -1415,7 +1425,7 @@ SELECT
   COALESCE(SUM(observation_count), 0)::bigint
 FROM subpaths
 GROUP BY node_count
-ORDER BY node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes)
+ORDER BY node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, statsMaxSubpathRoutes)
 	if err != nil {
 		return nil, err
 	}
@@ -1461,7 +1471,7 @@ LEFT JOIN LATERAL (
   JOIN nodes n ON n.id = u.node_id
 ) names ON true
 ORDER BY g.observation_count DESC, g.route_count DESC, g.last_seen DESC
-LIMIT $5`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, filter.Limit)
+LIMIT $6`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, statsMaxSubpathRoutes, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1518,7 +1528,7 @@ JOIN nodes nf ON nf.id = e.from_node_id
 JOIN nodes nt ON nt.id = e.to_node_id
 GROUP BY e.from_node_id, nf.name, e.to_node_id, nt.name
 ORDER BY COALESCE(SUM(e.observation_count), 0) DESC, COUNT(DISTINCT e.id) DESC, MAX(e.last_seen) DESC
-LIMIT $5`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, filter.Limit)
+LIMIT $6`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, statsMaxSubpathRoutes, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1550,14 +1560,14 @@ LIMIT $5`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, filter.
 func (s *Store) getStatsSubpathTimeline(ctx context.Context, filter api.StatsFilter, iataFilter string) ([]api.StatsSubpathTimelinePoint, error) {
 	rows, err := s.pool.Query(ctx, statsSubpathSQLBase()+`
 SELECT
-  to_timestamp(floor(extract(epoch from last_seen) / ($5::double precision * 3600)) * ($5::double precision * 3600)) AS bucket,
+  to_timestamp(floor(extract(epoch from last_seen) / ($6::double precision * 3600)) * ($6::double precision * 3600)) AS bucket,
   node_count,
   COUNT(DISTINCT id)::bigint,
   COUNT(*)::bigint,
   COALESCE(SUM(observation_count), 0)::bigint
 FROM subpaths
 GROUP BY bucket, node_count
-ORDER BY bucket ASC, node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, bucketHours(filter.Bucket))
+ORDER BY bucket ASC, node_count ASC`, filter.Since, filter.Until, iataFilter, statsMaxSubpathNodes, statsMaxSubpathRoutes, bucketHours(filter.Bucket))
 	if err != nil {
 		return nil, err
 	}

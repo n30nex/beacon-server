@@ -7934,6 +7934,9 @@ const docTemplate = `{
         "github_com_MeshCore-Beacon_beacon-server_internal_api.StatsSubpaths": {
             "type": "object",
             "properties": {
+                "analyzedRouteCount": {
+                    "type": "integer"
+                },
                 "averageNodeCount": {
                     "type": "number"
                 },
@@ -7950,6 +7953,9 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "serverTime": {
+                    "type": "integer"
+                },
+                "sourceRouteLimit": {
                     "type": "integer"
                 },
                 "subpathCount": {
@@ -7972,6 +7978,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_MeshCore-Beacon_beacon-server_internal_api.StatsSubpathRow"
                     }
+                },
+                "truncated": {
+                    "type": "boolean"
                 },
                 "uniqueSubpathCount": {
                     "type": "integer"

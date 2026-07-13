@@ -428,6 +428,9 @@ type StatsSubpaths struct {
 	ServerTime         int64                       `json:"serverTime"`
 	Window             StatsWindow                 `json:"window"`
 	RouteCount         int64                       `json:"routeCount"`
+	AnalyzedRouteCount int64                       `json:"analyzedRouteCount"`
+	SourceRouteLimit   int32                       `json:"sourceRouteLimit"`
+	Truncated          bool                        `json:"truncated"`
 	SubpathCount       int64                       `json:"subpathCount"`
 	UniqueSubpathCount int64                       `json:"uniqueSubpathCount"`
 	ObservationCount   int64                       `json:"observationCount"`

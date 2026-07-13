@@ -30,6 +30,11 @@ func RequestDeadline(next http.Handler) http.Handler {
 			deadline = 2 * time.Second
 		case strings.HasPrefix(r.URL.Path, "/api/v1/live"):
 			deadline = 2 * time.Second
+		case r.URL.Path == "/api/v1/stats/summary":
+			// Summary is the legacy all-in-one operator payload. It executes
+			// several bounded analytics queries and is warmed during deployment;
+			// ordinary Stats routes retain the tighter cold-cache budget below.
+			deadline = 60 * time.Second
 		case strings.HasPrefix(r.URL.Path, "/api/v1/stats"):
 			// The first request for a normalized analytics window warms the
 			// shared cache. On the production 1 vCPU database, the composite
